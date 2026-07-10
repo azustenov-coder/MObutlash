@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import * as XLSX from "xlsx";
 
 dotenv.config();
 
@@ -111,7 +112,7 @@ let botEvents: BotEvent[] = [
     username: "@elena_sklad",
     fullName: "Елена Петрова",
     action: "Материал берди",
-    details: "Фарҳод Каримовнинг сўровига асосан 12т цемент ва 5т арматурани юк машинасига ортиш учун чиқарди.",
+    details: "Фарҳод Каримовнинг сўровига асосан 12т цемент va 5т арматурани юк машинасига ортиш учун чиқарди.",
     status: "Бажарилди"
   },
   {
@@ -133,7 +134,7 @@ let botEvents: BotEvent[] = [
     username: "@kamron_driver",
     fullName: "Камрон Рустамов",
     action: "Юкни қабул қилди",
-    details: "Склад-1 дан 12т цемент ва 5т арматурани қабул қилиб, Сергели-5 объекти томон йўлга чиқди.",
+    details: "Склад-1 дан 12т цемент ва 5т арматурани қабул қилиб, Сергели-5 объекти томон йўлга chiqdи.",
     status: "Йўлда"
   },
   {
@@ -155,7 +156,7 @@ let inventory: InventoryItem[] = [
   { name: "Ғишт (Пишган)", category: "Деворий", quantity: 65000, unit: "дона", status: "Нормал", minThreshold: 10000 },
   { name: "Шағал", category: "Инерт", quantity: 120, unit: "м³", status: "Нормал", minThreshold: 40 },
   { name: "Қум (Ювилган)", category: "Инерт", quantity: 8, unit: "м³", status: "Кам қолди", minThreshold: 25 },
-  { name: "Дизель ёқилғиси", category: "Ёқилғи", quantity: 1800, unit: "литr", status: "Нормал", minThreshold: 1000 },
+  { name: "Дизель ёқилғиси", category: "Ёқилғи", quantity: 1800, unit: "литр", status: "Нормал", minThreshold: 1000 },
   { name: "Шпатлевка", category: "Пардоз", quantity: 0, unit: "қоп", status: "Тугади", minThreshold: 50 }
 ];
 
@@ -186,7 +187,7 @@ let transportOrders: TransportOrder[] = [
     vehicle: "Isuzu (01 987 DDD)",
     material: "Ғишт (15,000 дона)",
     quantity: "15,000 дона",
-    destination: "Юнусобод 12-даҳаси",
+    destination: "Юnuсобод 12-даҳаси",
     status: "Кутиляпти",
     progress: 0
   }
@@ -423,15 +424,45 @@ app.post("/api/trigger-simulation", (req, res) => {
 });
 
 app.get("/api/download-report", (req, res) => {
-  let csv = "ID,Timestamp,Role,Username,FullName,Action,Details,Status\n";
-  botEvents.forEach(e => {
-    const escapedDetails = e.details.replace(/"/g, '""');
-    csv += `"${e.id}","${e.timestamp}","${e.role}","${e.username}","${e.fullName}","${e.action}","${escapedDetails}","${e.status}"\n`;
-  });
+  // Map botEvents to row array for xlsx export
+  const rows = botEvents.map((e, index) => ({
+    "№": index + 1,
+    "ID": e.id,
+    "Сана / Вақт": e.timeFormatted,
+    "Роль / Lavozim": e.role,
+    "Фойдаланувчи": e.username,
+    "Ходим исми": e.fullName,
+    "Амал / Harakat": e.action,
+    "Батафсил": e.details,
+    "Ҳолат / Status": e.status
+  }));
+
+  // Create worksheet
+  const ws = XLSX.utils.json_to_sheet(rows);
   
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="MO_Kunlik_Hisobot_${new Date().toISOString().slice(0,10)}.csv"`);
-  res.send(csv);
+  // Create workbook
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Бот фаолият журнали");
+
+  // Adjust column widths
+  ws["!cols"] = [
+    { wch: 6 },   // №
+    { wch: 12 },  // ID
+    { wch: 14 },  // Sana / Vaqt
+    { wch: 20 },  // Rol
+    { wch: 20 },  // Foydalanuvchi
+    { wch: 25 },  // Xodim ismi
+    { wch: 25 },  // Amal
+    { wch: 60 },  // Batafsil
+    { wch: 15 }   // Holat
+  ];
+
+  // Write workbook to buffer
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="MO_Kunlik_Hisobot_${new Date().toISOString().slice(0,10)}.xlsx"`);
+  res.send(buffer);
 });
 
 // Gemini AI Auditor in Uzbek Language

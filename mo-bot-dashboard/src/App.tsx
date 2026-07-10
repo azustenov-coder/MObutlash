@@ -8,7 +8,6 @@ import {
   Wrench, 
   Package, 
   Clock, 
-  Download, 
   Play, 
   CheckCircle2, 
   User, 
@@ -19,17 +18,10 @@ import {
   Layers, 
   History,
   FileSpreadsheet,
-  AlertCircle,
-  TrendingDown,
-  Gauge,
-  MapPin,
-  ChevronRight,
-  Database,
-  Calendar,
-  Send
+  AlertCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { DashboardState, BotEvent, InventoryItem, TransportOrder, MechanicReport } from "./types";
+import { DashboardState, BotEvent } from "./types";
 
 export default function App() {
   const [data, setData] = useState<DashboardState | null>(null);
@@ -48,20 +40,18 @@ export default function App() {
   // Time tracker
   const [currentTime, setCurrentTime] = useState("");
 
-  const logsEndRef = useRef<HTMLDivElement>(null);
-
   // Load initial state
   const fetchState = async (showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
       const response = await fetch("/api/state");
-      if (!response.ok) throw new Error("Serverdan ma'lumot olishda xatolik");
+      if (!response.ok) throw new Error("Сервердан маълумот олишда хатолик");
       const stateData = await response.json();
       setData(stateData);
       setError(null);
     } catch (err: any) {
       console.error(err);
-      setError("Ulanishda xatolik yuz berdi. Iltimos, server ishga tushishini kuting.");
+      setError("Уланишда хатолик юз берди. Илтимос, сервер ишга тушишини кутинг.");
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -121,12 +111,12 @@ export default function App() {
       const response = await fetch("/api/gemini/analyze", { method: "POST" });
       const result = await response.json();
       if (!response.ok) {
-        throw new Error(result.error || "Sun'iy intellekt xizmati faol emas");
+        throw new Error(result.error || "Сунъий интеллект хизмати фаол эмас");
       }
       setAiAnalysis(result.analysis);
     } catch (err: any) {
       console.error(err);
-      setAiError(err.message || "Xatolik yuz berdi. Gemini API kaliti to'g'ri o'rnatilganligini tekshiring.");
+      setAiError(err.message || "Хатолик юз берdi. Gemini API калити тўғри ўрнатилганлигини текширинг.");
     } finally {
       setAiLoading(false);
     }
@@ -141,8 +131,8 @@ export default function App() {
             <Bot className="w-12 h-12 text-indigo-400" />
           </div>
           <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mb-4"></div>
-          <p className="text-white font-mono text-base font-semibold tracking-wide">TIZIM YUKLANMOQDA</p>
-          <p className="text-sm text-indigo-300 mt-2 font-mono">MO Bot real-time boshqaruv konsoli ulanmoqda...</p>
+          <p className="text-white font-mono text-base font-semibold tracking-wide">ТИЗИМ ЮКЛАНМОҚДА</p>
+          <p className="text-sm text-indigo-300 mt-2 font-mono">МО Бот реал вақтдаги бошқарув консоли уланмоқда...</p>
         </div>
       </div>
     );
@@ -155,14 +145,14 @@ export default function App() {
           <div className="p-3 bg-red-500/10 rounded-xl inline-block mb-4 border border-red-500/20">
             <AlertCircle className="w-10 h-10 text-red-400" />
           </div>
-          <h2 className="text-xl font-bold mb-3 text-white">Tarmoqqa ulanish xatosi</h2>
-          <p className="text-slate-300 text-sm leading-relaxed mb-6">{error || "Server ma'lumotlari yuklanmadi."}</p>
+          <h2 className="text-xl font-bold mb-3 text-white">Тармоққа уланиш хатоси</h2>
+          <p className="text-slate-300 text-sm leading-relaxed mb-6">{error || "Сервер маълумотлари юкланмади."}</p>
           <button 
             onClick={() => fetchState(true)}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-xl transition duration-150 flex items-center justify-center space-x-2 shadow-lg shadow-indigo-600/25"
+            className="w-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-xl transition duration-150 flex items-center justify-center space-x-2 shadow-lg shadow-indigo-600/25 cursor-pointer"
           >
             <RefreshCw className="w-4 h-4" />
-            <span>Qayta yuklash</span>
+            <span>Қайта юклаш</span>
           </button>
         </div>
       </div>
@@ -186,27 +176,27 @@ export default function App() {
   }, {} as Record<string, number>);
 
   const rolesList = [
-    { key: "boshqaruvchi", label: "Boshqaruvchi (Manager)", color: "#a78bfa", bg: "bg-violet-500/10", border: "border-violet-500/30" },
-    { key: "br", label: "BR Operator", color: "#60a5fa", bg: "bg-blue-500/10", border: "border-blue-500/30" },
-    { key: "brigadir", label: "Brigadir (Ustalar)", color: "#34d399", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
-    { key: "skladchik", label: "Omborchi (Sklad)", color: "#fbbf24", bg: "bg-amber-500/10", border: "border-amber-500/30" },
-    { key: "yetkazib_beruvchi", label: "Yetkazib beruvchi", color: "#f97316", bg: "bg-orange-500/10", border: "border-orange-500/30" },
-    { key: "mexanik", label: "Mexanik (Graj)", color: "#f87171", bg: "bg-red-500/10", border: "border-red-500/30" }
+    { key: "boshqaruvchi", label: "Бошқарувчи (Менеджер)", color: "#a78bfa", bg: "bg-violet-500/10", border: "border-violet-500/30" },
+    { key: "br", label: "БР Оператори", color: "#60a5fa", bg: "bg-blue-500/10", border: "border-blue-500/30" },
+    { key: "brigadir", label: "Бригадир (Усталар)", color: "#34d399", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
+    { key: "skladchik", label: "Омборчи (Склад)", color: "#fbbf24", bg: "bg-amber-500/10", border: "border-amber-500/30" },
+    { key: "yetkazib_beruvchi", label: "Етказиб берувчи", color: "#f97316", bg: "bg-orange-500/10", border: "border-orange-500/30" },
+    { key: "mexanik", label: "Механик (Гараж)", color: "#f87171", bg: "bg-red-500/10", border: "border-red-500/30" }
   ];
 
   const maxRoleActivity = Math.max(...rolesList.map(r => roleCounts[r.key] || 0), 1);
 
   const roleMeta = {
-    boshqaruvchi: { label: "Boshqaruvchi", color: "text-violet-400 bg-violet-400/10 border-violet-400/20", icon: Shield },
-    br: { label: "BR Operator", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: Layers },
-    brigadir: { label: "Brigadir", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: User },
-    skladchik: { label: "Omborchi", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: Package },
-    yetkazib_beruvchi: { label: "Yetkazib beruvchi", color: "text-orange-400 bg-orange-400/10 border-orange-400/20", icon: Truck },
-    mexanik: { label: "Mexanik", color: "text-red-400 bg-red-400/10 border-red-400/20", icon: Wrench },
+    boshqaruvchi: { label: "Бошқарувчи", color: "text-violet-400 bg-violet-400/10 border-violet-400/20", icon: Shield },
+    br: { label: "БР Оператори", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: Layers },
+    brigadir: { label: "Бригадир", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: User },
+    skladchik: { label: "Омборчи", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: Package },
+    yetkazib_beruvchi: { label: "Етказиб берувчи", color: "text-orange-400 bg-orange-400/10 border-orange-400/20", icon: Truck },
+    mexanik: { label: "Механик", color: "text-red-400 bg-red-400/10 border-red-400/20", icon: Wrench },
   };
 
   return (
-    <div id="main_dashboard_layout" className="min-h-screen bg-[#070913] text-slate-100 font-sans selection:bg-indigo-600 selection:text-white">
+    <div id="main_dashboard_layout" className="min-h-screen bg-[#070913] text-slate-100 font-sans selection:bg-indigo-600 selection:text-white pb-12">
       {/* Decorative cyber grid overlay */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a_1px,transparent_1px),linear-gradient(to_bottom,#0f172a_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-40" />
 
@@ -221,13 +211,13 @@ export default function App() {
             <div>
               <div className="flex items-center space-x-3">
                 <h1 className="text-xl lg:text-2xl font-extrabold tracking-tight text-white font-sans">
-                  MO BOT <span className="bg-gradient-to-r from-indigo-400 to-indigo-600 bg-clip-text text-transparent">DASHBOARD</span>
+                  МО БОТ <span className="bg-gradient-to-r from-indigo-400 to-indigo-600 bg-clip-text text-transparent">ДАШБОРДИ</span>
                 </h1>
                 <span className="text-xs bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 px-2.5 py-0.5 rounded-full font-mono font-bold tracking-wider">
-                  SUPER ADMIN PANEL
+                  СУПЕР АДМИН ПАНЕЛИ
                 </span>
               </div>
-              <p className="text-sm text-slate-400 mt-0.5 font-medium">Moddiy-Texnika Ta'minoti Telegram boti real-time monitoringi va nazorati</p>
+              <p className="text-sm text-slate-400 mt-0.5 font-medium">Моддий-техника таъминоти Телеграм боти реал вақтдаги мониторинги ва назорати</p>
             </div>
           </div>
 
@@ -238,7 +228,7 @@ export default function App() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
               </span>
-              <span>LIVE REJIM</span>
+              <span>ЖОНЛИ РЕЖИМ</span>
             </div>
 
             {/* Time Zone */}
@@ -252,20 +242,20 @@ export default function App() {
               onClick={handleTriggerSimulation}
               disabled={triggeringSim}
               className="bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-sm font-bold px-4 py-2.5 rounded-xl transition duration-150 flex items-center space-x-2 disabled:opacity-50 cursor-pointer shadow-lg shadow-indigo-600/30 border border-indigo-400/30"
-              title="Telegram botdan keladigan so'rovni qo'lda simulyatsiya qilish"
+              title="Телеграм ботдан келадиган сўровни қўлда симуляция қилиш"
             >
               <Play className={`w-4 h-4 fill-current ${triggeringSim ? "animate-spin" : ""}`} />
-              <span>{triggeringSim ? "Simulyatsiya..." : "Bot Simulyatsiya"}</span>
+              <span>{triggeringSim ? "Симуляция..." : "Бот Симуляцияси"}</span>
             </button>
 
             {/* Excel Download button with bold visual */}
             <a
               href="/api/download-report"
               className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white text-sm font-bold px-4 py-2.5 rounded-xl transition duration-150 flex items-center space-x-2 shadow-lg shadow-emerald-600/30 border border-emerald-500/30"
-              title="Kunlik to'liq hisobotni Excel formatida yuklab olish"
+              title="Кунлик тўлиқ ҳисоботни юклаб олиш"
             >
               <FileSpreadsheet className="w-4 h-4" />
-              <span>Excel Hisobot</span>
+              <span>Эхcел Ҳисоботи</span>
             </a>
           </div>
 
@@ -285,10 +275,10 @@ export default function App() {
               <Bot className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Jami Bot Amallari</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Жами Бот Амаллари</p>
               <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.totalLogsCount}</h3>
               <p className="text-xs text-emerald-400 font-bold mt-1.5 flex items-center">
-                <TrendingUp className="w-4 h-4 mr-1 shrink-0" /> +28% Faollik (Bugun)
+                <TrendingUp className="w-4 h-4 mr-1 shrink-0" /> +28% Фаоллик (Бугун)
               </p>
             </div>
           </div>
@@ -301,10 +291,10 @@ export default function App() {
               <Truck className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Yo'ldagi Yuklar</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Йўлдаги Юклар</p>
               <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.pendingOrdersCount}</h3>
               <p className="text-xs text-blue-300 font-bold mt-1.5 flex items-center">
-                <Radio className="w-4 h-4 mr-1 animate-pulse text-blue-400 shrink-0" /> Marshrutlar Nazoratda
+                <Radio className="w-4 h-4 mr-1 animate-pulse text-blue-400 shrink-0" /> Маршрутлар Назоратда
               </p>
             </div>
           </div>
@@ -317,10 +307,10 @@ export default function App() {
               <Wrench className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Soz Texnikalar</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Соз Техникалар</p>
               <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.activeVehiclesCount}</h3>
               <p className="text-xs text-emerald-400 font-bold mt-1.5 flex items-center">
-                <CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> 82% Texnik Tayyorlik
+                <CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> 82% Техник Тайёрлик
               </p>
             </div>
           </div>
@@ -333,10 +323,10 @@ export default function App() {
               <AlertTriangle className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Kritik Materiallar</p>
+              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Критик Материаллар</p>
               <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.criticalMaterialsCount}</h3>
               <p className="text-xs text-amber-400 font-bold mt-1.5 flex items-center">
-                <AlertCircle className="w-4 h-4 mr-1 shrink-0 text-amber-400 animate-pulse" /> Zaxirani To'ldirish Shart
+                <AlertCircle className="w-4 h-4 mr-1 shrink-0 text-amber-400 animate-pulse" /> Захирани Тўлдириш Шарт
               </p>
             </div>
           </div>
@@ -353,15 +343,15 @@ export default function App() {
                 <div className="flex items-center space-x-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
                   <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                    Ombor Moddiy Zaxiralari va Limitlar
+                    Омбор Моддий Захиралари ва Лимитлар
                   </h3>
                 </div>
                 <span className="text-xs text-slate-400 font-mono font-bold bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800">
-                  MARKAZIY SKLAD-1
+                  МАРКАЗИЙ СКЛАД-1
                 </span>
               </div>
               <p className="text-sm text-slate-400 leading-relaxed mb-6">
-                Materiallarning joriy qoldig'i (rangli barlar) va tizimda sozlangan minimal zaxira limitlari (vertikal qizil chiziq).
+                Материалларнинг жорий қолдиғи (рангли барлар) ва тизимда созланган минимал захира лимитлари (вертикал қизил чизиқ).
               </p>
             </div>
 
@@ -369,9 +359,9 @@ export default function App() {
             <div className="space-y-5">
               {data.inventory.map((item, idx) => {
                 let maxCap = 250;
-                if (item.name.includes("G'isht")) maxCap = 100000;
-                if (item.name.includes("yoqilg'i")) maxCap = 3000;
-                if (item.name.includes("Sement")) maxCap = 300;
+                if (item.name.includes("Ғишт")) maxCap = 100000;
+                if (item.name.toLowerCase().includes("ёқилғи")) maxCap = 3000;
+                if (item.name.includes("Цемент")) maxCap = 300;
                 
                 const percentage = Math.min(100, (item.quantity / maxCap) * 100);
                 const limitPercentage = (item.minThreshold / maxCap) * 100;
@@ -385,8 +375,8 @@ export default function App() {
                           {item.quantity.toLocaleString()} / {maxCap.toLocaleString()} {item.unit}
                         </span>
                         <span className={`px-2.5 py-0.5 rounded-md text-xs font-black tracking-wide ${
-                          item.status === "Normal" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                          item.status === "Kam qoldi" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : 
+                          item.status === "Нормал" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                          item.status === "Кам қолди" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : 
                           "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse"
                         }`}>
                           {item.status.toUpperCase()}
@@ -402,8 +392,8 @@ export default function App() {
                         animate={{ width: `${percentage}%` }}
                         transition={{ duration: 0.8, ease: "easeOut" }}
                         className={`h-full rounded-md relative ${
-                          item.status === "Normal" ? "bg-gradient-to-r from-emerald-600 to-emerald-400" :
-                          item.status === "Kam qoldi" ? "bg-gradient-to-r from-amber-500 to-amber-300" : 
+                          item.status === "Нормал" ? "bg-gradient-to-r from-emerald-600 to-emerald-400" :
+                          item.status === "Кам қолди" ? "bg-gradient-to-r from-amber-500 to-amber-300" : 
                           "bg-gradient-to-r from-red-600 to-red-400"
                         }`}
                       >
@@ -415,10 +405,10 @@ export default function App() {
                       <div 
                         className="absolute top-0 bottom-0 w-1 bg-red-400 z-10 shadow-[0_0_8px_rgba(239,68,68,0.5)]" 
                         style={{ left: `${limitPercentage}%` }}
-                        title={`Minimal xavfsiz zaxira: ${item.minThreshold}`}
+                        title={`Минимал хавфсиз захира: ${item.minThreshold}`}
                       >
                         <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[9px] text-red-400 font-mono font-bold bg-[#070913] px-1 py-0.2 rounded border border-red-500/20 leading-none">
-                          limit
+                          лимит
                         </span>
                       </div>
                     </div>
@@ -435,15 +425,15 @@ export default function App() {
                 <div className="flex items-center space-x-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
                   <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                    Rollar Bo'yicha Faollik
+                    Роллар Бўйича Фаоллик
                   </h3>
                 </div>
                 <span className="text-xs text-slate-400 font-mono font-bold bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800">
-                  BUGUNGI STATISTIKA
+                  БУГУНГИ СТАТИСТИКА
                 </span>
               </div>
               <p className="text-sm text-slate-400 leading-relaxed mb-4">
-                Har bir mas'ul xodim guruhining bugungi kunda Telegram boti orqali jo'natgan umumiy so'rovlari va hisobotlari soni.
+                Ҳар бир масъул ходим гуруҳининг бугунги кунда Телеграм боти орқали жўнатган умумий сўровлари ва ҳисоботлари сони.
               </p>
             </div>
 
@@ -458,7 +448,7 @@ export default function App() {
                     
                     {/* Permanent/Hover Counter Badge - Highly readable */}
                     <div className="bg-slate-900 border border-slate-800 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-white shadow-lg -translate-y-1">
-                      {count} ta
+                      {count} та
                     </div>
 
                     {/* SVG column bar */}
@@ -480,11 +470,11 @@ export default function App() {
 
                     {/* Label */}
                     <span className="text-xs font-mono text-slate-300 font-bold text-center uppercase tracking-tight block truncate w-16" title={role.label}>
-                      {role.key === "boshqaruvchi" ? "Admin" : 
-                       role.key === "br" ? "Operator" : 
-                       role.key === "brigadir" ? "Brigadir" : 
-                       role.key === "skladchik" ? "Ombor" : 
-                       role.key === "yetkazib_beruvchi" ? "Haydovchi" : "Mexanik"}
+                      {role.key === "boshqaruvchi" ? "Админ" : 
+                       role.key === "br" ? "Оператор" : 
+                       role.key === "brigadir" ? "Бригадир" : 
+                       role.key === "skladchik" ? "Омбор" : 
+                       role.key === "yetkazib_beruvchi" ? "Ҳайдовчи" : "Механик"}
                     </span>
                   </div>
                 );
@@ -516,14 +506,14 @@ export default function App() {
               <div className="flex items-center space-x-2">
                 <Sparkles className="w-6 h-6 text-indigo-400 animate-pulse shrink-0" />
                 <span className="text-xs font-black font-mono tracking-widest text-indigo-300 uppercase">
-                  GEMINI AI CO-PILOT AUDIT
+                  GEMINI АИ КЎМАКЧИ АУДИТИ
                 </span>
               </div>
               <h2 className="text-xl lg:text-2xl font-black text-white tracking-tight">
-                Kunlik Hisobot va Intellektual Tahlil
+                Кунlik Ҳисобот ва Интеллектуал Таҳлил
               </h2>
               <p className="text-slate-300 text-sm lg:text-base leading-relaxed">
-                Tizimdagi barcha loglarni, ombor qoldig'ini, haydovchilar yetkazib berish jarayonlarini va nosoz maxsus texnikalar holatlarini Gemini AI orqali to'liq audit qiling. Xato-kamchiliklar va samaradorlikni oshirish uchun tavsiyalar oling.
+                Тизимдаги барча логларни, омбор қолдиғини, ҳайдовчилар етказиб бериш жараёнларини ва носоз махсус техникалар ҳолатларини Gemini АИ орқали тўлиқ аудит қилинг. Хато-камчиликлар ва самарадорликни ошириш учун тавсиялар олинг.
               </p>
             </div>
 
@@ -536,12 +526,12 @@ export default function App() {
                 {aiLoading ? (
                   <>
                     <RefreshCw className="w-5 h-5 animate-spin" />
-                    <span>Ma'lumotlar tahlil qilinmoqda...</span>
+                    <span>Маълумотлар таҳлил қилинмоқда...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-5 h-5 fill-current text-white animate-pulse" />
-                    <span>Gemini AI Auditni Ishga Tushirish</span>
+                    <span>Gemini АИ аудитни ишга тушириш</span>
                   </>
                 )}
               </button>
@@ -565,7 +555,7 @@ export default function App() {
                     <div className="h-5 bg-indigo-500/10 rounded animate-pulse w-5/6"></div>
                     <div className="h-5 bg-indigo-500/10 rounded animate-pulse w-2/3"></div>
                     <p className="text-center text-sm text-indigo-300 font-mono animate-pulse">
-                      Gemini 3.5 real-vaqtdagi ma'lumotlarni integratsiya qilmoqda...
+                      Gemini 3.5 реал вақтдаги маълумотларни интеграция қилмоқда...
                     </p>
                   </div>
                 )}
@@ -574,21 +564,21 @@ export default function App() {
                   <div className="p-5 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-200 flex items-start space-x-3">
                     <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                     <div>
-                      <p className="font-bold">AI Tahlil bajarilmadi</p>
+                      <p className="font-bold">АИ таҳлил бажарилмади</p>
                       <p className="mt-1 text-slate-300">{aiError}</p>
                     </div>
                   </div>
                 )}
 
                 {aiAnalysis && (
-                  <div className="bg-slate-950/90 border border-indigo-500/20 rounded-2xl p-6 lg:p-8 max-h-[500px] overflow-y-auto shadow-2xl relative">
+                  <div className="bg-slate-950/90 border border-indigo-500/20 rounded-2xl p-6 lg:p-8 max-h-[500px] overflow-y-auto shadow-2xl relative border border-indigo-500/30 scrollbar-thin">
                     <div className="flex items-center justify-between pb-4 border-b border-indigo-500/20 mb-6">
                       <span className="font-extrabold text-indigo-400 font-sans text-sm lg:text-base flex items-center space-x-2">
                         <Sparkles className="w-5 h-5 text-indigo-400" />
-                        <span>KUNLIK INTELLEKTUAL AUDIT HISOBOTI (O'ZBEK TILI)</span>
+                        <span>КУНЛИК ИНТЕЛЛЕКТУАЛ АУДИТ ҲИСОБОТИ (ЎЗБЕК ТИЛИДА)</span>
                       </span>
                       <span className="text-xs text-slate-500 font-mono font-bold bg-slate-900 px-3 py-1 rounded border border-slate-800">
-                        Sana: Bugun
+                        Сана: Бугун
                       </span>
                     </div>
                     
@@ -641,7 +631,7 @@ export default function App() {
                 <div className="flex items-center space-x-2">
                   <History className="w-5 h-5 text-indigo-400" />
                   <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                    Real-Time Bot Faoliyat Jurnali
+                    Реал Вақтдаги Бот Фаолият Журнали
                   </h3>
                 </div>
                 <span className="flex h-3 w-3 relative">
@@ -658,7 +648,7 @@ export default function App() {
                     activeTab === "barchasi" ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20" : "bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800"
                   }`}
                 >
-                  Barchasi
+                  Барчаси
                 </button>
                 {rolesList.map((role) => (
                   <button
@@ -670,11 +660,11 @@ export default function App() {
                         : "bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800"
                     }`}
                   >
-                    {role.key === "boshqaruvchi" ? "Admin" : 
-                     role.key === "br" ? "Operator" : 
-                     role.key === "brigadir" ? "Brigadir" : 
-                     role.key === "skladchik" ? "Ombor" : 
-                     role.key === "yetkazib_beruvchi" ? "Haydovchi" : "Mexanik"}
+                    {role.key === "boshqaruvchi" ? "Админ" : 
+                     role.key === "br" ? "Оператор" : 
+                     role.key === "brigadir" ? "Бригадир" : 
+                     role.key === "skladchik" ? "Омбор" : 
+                     role.key === "yetkazib_beruvchi" ? "Ҳайдовчи" : "Механик"}
                   </button>
                 ))}
               </div>
@@ -684,7 +674,7 @@ export default function App() {
                 <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Xodim yoki amalni qidirish..."
+                  placeholder="Ходим ёки амални қидириш..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-slate-950 text-sm pl-10 pr-4 py-3 rounded-xl border border-slate-800 focus:border-indigo-500/80 focus:outline-none focus:ring-1 focus:ring-indigo-500/40 text-slate-100 font-sans"
@@ -697,7 +687,7 @@ export default function App() {
               <AnimatePresence initial={false}>
                 {filteredLogs.length === 0 ? (
                   <div className="text-center py-20 text-slate-500 text-sm font-medium">
-                    Qidiruvga mos keladigan bot loglari topilmadi.
+                    Қидирувга мос келадиган бот логлари топилмади.
                   </div>
                 ) : (
                   filteredLogs.map((log) => {
@@ -756,8 +746,8 @@ export default function App() {
                           <div className="pt-2 flex items-center justify-between text-xs font-mono text-slate-400 border-t border-slate-800/40">
                             <span className="font-bold">ID: {log.id}</span>
                             <span className={`font-black ${
-                              log.status === "Bajarildi" || log.status === "Yetkazildi" || log.status === "Tasdiqlandi" ? "text-emerald-400" :
-                              log.status === "Yo'lda" || log.status === "Yuklanmoqda" ? "text-blue-400" : "text-amber-400"
+                              log.status === "Бажарилди" || log.status === "Етказилди" || log.status === "Тасдиқланди" ? "text-emerald-400" :
+                              log.status === "Йўлда" || log.status === "Юкланмоқда" ? "text-blue-400" : "text-amber-400"
                             }`}>
                               ● {log.status}
                             </span>
@@ -781,11 +771,11 @@ export default function App() {
                 <div className="flex items-center space-x-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse" />
                   <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                    Logistika va Yuk Yetkazib Berish
+                    Логистика ва Юк Етказиб Бериш
                   </h3>
                 </div>
                 <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
-                  REAL-TIME POYEZDLAR
+                  РЕАЛ ВАҚТДАГИ МАРШРУТЛАР
                 </span>
               </div>
 
@@ -794,10 +784,10 @@ export default function App() {
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
                       <th className="py-3 px-1">ID</th>
-                      <th className="py-3 px-2">Haydovchi / Texnika</th>
-                      <th className="py-3 px-2">Material / Hajm</th>
-                      <th className="py-3 px-2">Yetkazish Manzili</th>
-                      <th className="py-3 px-2 text-right">Progress</th>
+                      <th className="py-3 px-2">Ҳайдовчи / Техника</th>
+                      <th className="py-3 px-2">Материал / Ҳажм</th>
+                      <th className="py-3 px-2">Етказиш Манзили</th>
+                      <th className="py-3 px-2 text-right">Прогресс</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/40">
@@ -815,8 +805,8 @@ export default function App() {
                         <td className="py-4 px-2 text-right space-y-1.5">
                           <div className="flex items-center justify-end space-x-2 font-mono text-xs font-bold text-slate-200">
                             <span className={`h-2.5 w-2.5 rounded-full ${
-                              order.status === "Yetkazildi" ? "bg-emerald-400 animate-pulse" :
-                              order.status === "Yo'lda" ? "bg-blue-400 animate-pulse" : "bg-amber-400"
+                              order.status === "Етказилди" ? "bg-emerald-400 animate-pulse" :
+                              order.status === "Йўлда" ? "bg-blue-400 animate-pulse" : "bg-amber-400"
                             }`} />
                             <span>{order.status}</span>
                             <span>({order.progress}%)</span>
@@ -825,8 +815,8 @@ export default function App() {
                           <div className="w-28 h-2 bg-slate-950 rounded-full overflow-hidden inline-block border border-slate-800">
                             <div 
                               className={`h-full rounded-full ${
-                                order.status === "Yetkazildi" ? "bg-emerald-500" :
-                                order.status === "Yo'lda" ? "bg-blue-500" : "bg-amber-500"
+                                order.status === "Етказилди" ? "bg-emerald-500" :
+                                order.status === "Йўлда" ? "bg-blue-500" : "bg-amber-500"
                               }`}
                               style={{ width: `${order.progress}%` }}
                             />
@@ -845,11 +835,11 @@ export default function App() {
                 <div className="flex items-center space-x-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" />
                   <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                    Maxsus Texnikalar va Yoqilg'i Tarqatish
+                    Махсус Техникалар ва Ёқилғи Тарқатиш
                   </h3>
                 </div>
                 <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
-                  TEXNIK AUDIT
+                  ТЕХНИК АУДИТ
                 </span>
               </div>
 
@@ -857,11 +847,11 @@ export default function App() {
                 <table className="w-full text-left text-sm border-collapse">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
-                      <th className="py-3 px-1">Kod</th>
-                      <th className="py-3 px-2">Transport Rusumi</th>
-                      <th className="py-3 px-2">Aniqlangan Nosozliklar</th>
-                      <th className="py-3 px-2 text-center">Holat</th>
-                      <th className="py-3 px-2 text-right">Yoqilg'i</th>
+                      <th className="py-3 px-1">Код</th>
+                      <th className="py-3 px-2">Транспорт Русуми</th>
+                      <th className="py-3 px-2">Аниқланган Носозликлар</th>
+                      <th className="py-3 px-2 text-center">Ҳолат</th>
+                      <th className="py-3 px-2 text-right">Ёқилғи</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/40">
@@ -874,8 +864,8 @@ export default function App() {
                         </td>
                         <td className="py-4 px-2 text-center">
                           <span className={`px-2.5 py-1 rounded-md text-xs font-black tracking-wider ${
-                            rep.status === "Soz" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                            rep.status === "Ta'mirlanmoqda" ? "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse" : 
+                            rep.status === "Соз" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                            rep.status === "Таъмирланмоқда" ? "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse" : 
                             "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                           }`}>
                             {rep.status.toUpperCase()}
@@ -906,8 +896,8 @@ export default function App() {
       {/* Footer copyright */}
       <footer className="border-t border-slate-800/80 mt-16 py-8 text-center text-slate-400 text-sm font-mono bg-slate-950/40 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <p>© 2026 MO COMMAND DASHBOARD - INTELLEKTUAL NAZORAT TIZIMI</p>
-          <p className="text-xs text-slate-500">Simulyatsiya va real-vaqtda ma'lumot uzatish tizimi faol</p>
+          <p>© 2026 МО БОШҚАРУВ ПАНЕЛИ - ИНТЕЛЛЕКТУАЛ НАЗОРАТ ТИЗИМИ</p>
+          <p className="text-xs text-slate-500">Симуляция ва реал вақтда маълумот узатиш тизими фаол</p>
         </div>
       </footer>
 

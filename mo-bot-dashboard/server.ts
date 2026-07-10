@@ -63,7 +63,7 @@ interface MechanicReport {
   id: string;
   vehicle: string;
   issue: string;
-  status: "Соз" | "Таъмирланмоқда" | "Кутиш жараёниda";
+  status: "Соз" | "Таъмирланмоқда" | "Кутиш жараёнида";
   assignedMechanic: string;
   fuelDistributed: number; // in Liters
 }
@@ -143,7 +143,7 @@ let botEvents: BotEvent[] = [
     role: "mexanik",
     username: "@sardor_mexanik",
     fullName: "Сардор Алиев",
-    action: "Техник кўрик ҳисобоti",
+    action: "Техник кўрик ҳисоботи",
     details: "КамАЗ (01 123 BBB) русумли юк машинасининг тормоз тизими носозлиги сабабли таъмирлашга киритилди.",
     status: "Кутиляпти"
   }
@@ -155,7 +155,7 @@ let inventory: InventoryItem[] = [
   { name: "Ғишт (Пишган)", category: "Деворий", quantity: 65000, unit: "дона", status: "Нормал", minThreshold: 10000 },
   { name: "Шағал", category: "Инерт", quantity: 120, unit: "м³", status: "Нормал", minThreshold: 40 },
   { name: "Қум (Ювилган)", category: "Инерт", quantity: 8, unit: "м³", status: "Кам қолди", minThreshold: 25 },
-  { name: "Дизель ёқилғиси", category: "Ёқилғи", quantity: 1800, unit: "литр", status: "Нормал", minThreshold: 1000 },
+  { name: "Дизель ёқилғиси", category: "Ёқилғи", quantity: 1800, unit: "литr", status: "Нормал", minThreshold: 1000 },
   { name: "Шпатлевка", category: "Пардоз", quantity: 0, unit: "қоп", status: "Тугади", minThreshold: 50 }
 ];
 
@@ -230,7 +230,7 @@ const eventTemplates: {
       const val = selected.includes("Ғишт") ? "5000 дона" : (selected.includes("Қум") || selected.includes("Шағал") ? "15 м³" : "8 тонна");
       const subObj = ["Қорақамиш-3", "Тошкент Сити Бўлим 4", "Олмазор Резиденция", "Юнусобод 19-мавзе"][Math.floor(Math.random() * 4)];
       return {
-        text: `Объект: ${subObj} uchun shoshilinch ${val} ${selected} so'rab buyurtma yaratdi.`
+        text: `Объект: ${subObj} учун шошилинч ${val} ${selected} сўраб буюртма яратди.`
       };
     }
   },
@@ -242,7 +242,7 @@ const eventTemplates: {
       const driver = firstNames[Math.floor(Math.random() * firstNames.length)] + " " + lastNames[Math.floor(Math.random() * lastNames.length)];
       const loc = ["Қорақамиш", "Юнусобод", "Сергели", "Олмазор"][Math.floor(Math.random() * 4)];
       return {
-        text: `Operator ${driver}ga yangi transport marshrutini rejalashtirdi. Manzil: ${loc} qurilish uchastkasi.`,
+        text: `Оператор ${driver}га янги транспорт маршрутини режалаштирди. Манзил: ${loc} қурилиш участкаси.`,
         updateState: () => {
           const id = "TR-" + Math.floor(1000 + Math.random() * 9000);
           transportOrders.push({
@@ -250,8 +250,8 @@ const eventTemplates: {
             driverName: driver,
             vehicle: ["MAN (01 777 AAA)", "Howo (01 456 CCC)", "Isuzu (01 987 DDD)"][Math.floor(Math.random() * 3)],
             material: ["Цемент", "Ғишт", "Арматура", "Шағал"][Math.floor(Math.random() * 4)],
-            quantity: Math.floor(5 + Math.random() * 15) + " birlik",
-            destination: loc + " Obyekti",
+            quantity: Math.floor(5 + Math.random() * 15) + " бирлик",
+            destination: loc + " Объекти",
             status: "Юкланмоқда",
             progress: 10
           });
@@ -268,7 +268,7 @@ const eventTemplates: {
       const mat = materials[Math.floor(Math.random() * materials.length)];
       const amount = mat.includes("Ғишт") ? 10000 : (mat.includes("ёқилғи") ? 500 : 15);
       return {
-        text: `Tashqi yetkazib beruvchidan ${amount} ${inventory.find(i => i.name === mat)?.unit || ""} yangi ${mat} qabul qildi va zaxiraga qo'shdi.`,
+        text: `Ташқи етказиб берувчидан ${amount} ${inventory.find(i => i.name === mat)?.unit || ""} янги ${mat} қабул қилди ва захирага қўшди.`,
         updateState: () => {
           const item = inventory.find(i => i.name === mat);
           if (item) {
@@ -288,7 +288,7 @@ const eventTemplates: {
       const mat = items[Math.floor(Math.random() * items.length)];
       const amount = mat.includes("Ғишт") ? 2000 : 5;
       return {
-        text: `Brigadir hisobiga ${amount} ${inventory.find(i => i.name === mat)?.unit || ""} ${mat} ombordan chiqarib berdi.`,
+        text: `Бригадир ҳисобига ${amount} ${inventory.find(i => i.name === mat)?.unit || ""} ${mat} омбордан чиқариб берди.`,
         updateState: () => {
           const item = inventory.find(i => i.name === mat);
           if (item) {
@@ -304,11 +304,11 @@ const eventTemplates: {
     action: "Манзилга етиб борди",
     status: "Етказилди",
     detailsGenerator: () => {
-      let text = "Yetkazib beruvchi yukni poydevor qurilish maydoniga to'liq tushirdi.";
+      let text = "Етказиб берувчи юкни пойдевор қурилиш майдонига тўлиқ туширди.";
       const pendingIdx = transportOrders.findIndex(t => t.status === "Йўлда" || t.status === "Юкланмоқда");
       if (pendingIdx !== -1) {
         const order = transportOrders[pendingIdx];
-        text = `Haydovchi ${order.driverName} yukni (${order.material}, ${order.quantity}) ${order.destination} manziliga xavfsiz yetkazdi.`;
+        text = `Ҳайдовчи ${order.driverName} юкни (${order.material}, ${order.quantity}) ${order.destination} манзилига хавфсиз етказди.`;
         transportOrders[pendingIdx].status = "Етказилди";
         transportOrders[pendingIdx].progress = 100;
       }
@@ -324,7 +324,7 @@ const eventTemplates: {
       const vehicles = ["MAN (01 777 AAA)", "Howo (01 456 CCC)", "Isuzu (01 987 DDD)"];
       const chosenVeh = vehicles[Math.floor(Math.random() * vehicles.length)];
       return {
-        text: `Texnika ${chosenVeh} uchun ${amount} litr dizel yoqilg'isi quyildi.`,
+        text: `Техника ${chosenVeh} учун ${amount} литр дизель ёқилғиси қуйилди.`,
         updateState: () => {
           const fuel = inventory.find(i => i.name === "Дизель ёқилғиси");
           if (fuel) {
@@ -485,7 +485,7 @@ TAYYORLANADIGAN HISOBOT TUZILISHI:
 3. 👤 Rollar bo'yicha baholash (Boshqaruvchi, Mexanik, Brigadir, BR, Yetkazib beruvchi, Skladchik nimalar qildi, kim eng faol).
 4. 💡 Tizim samaradorligini oshirish bo'yicha 3 ta amaliy tavsiya (masalan, yoqilg'i sarfi, logistika marshrutlari yoki zaxiralarni to'ldirish bo'yicha).
 
-Iltimos, hisobotni juda o'qishga oson, chiroyli Markdown formatida va foydali ma'lumotlar bilan boyitilgan tarzda qaytaring. Keraksiz texnik so'zlarni kamaytirib, aniq biznes qiymatga e'tibor qarateting.`;
+Iltimos, hisobotni juda o'qishga oson, chiroyli Markdown formatida va foydali ma'lumotlar bilan boyitilgan tarzda qaytaring. Keraksiz texnik so'zlarni kamaytirib, aniq biznes qiymatga e'tibor qarating.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",

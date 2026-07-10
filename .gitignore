@@ -1,0 +1,28 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables (maxfiy)
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# SQLite database (local ma'lumotlar)
+*.db
+*.sqlite3
+*.sqlite
+
+# Excel hisobot fayllari
+*.xlsx
+
+# OS fayllar
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

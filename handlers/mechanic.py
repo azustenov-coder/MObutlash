@@ -32,28 +32,15 @@ async def start_request_creation(message: Message, state: FSMContext):
 async def process_general_desc(message: Message, state: FSMContext):
     await state.update_data(general_desc=message.text, items=[])
     
-    # Ombordagi mavjud mahsulotlarni ko'rsatamiz tugma qilib
-    stock = await db.get_all_inventory()
-    keyboard_buttons = []
-    
-    row = []
-    for item in stock:
-        row.append(KeyboardButton(text=item['name']))
-        if len(row) == 2:
-            keyboard_buttons.append(row)
-            row = []
-    if row:
-        keyboard_buttons.append(row)
-        
-    # Tugallash tugmasi
-    keyboard_buttons.append([KeyboardButton(text="Tugallash / Zayavkani yuborish 📨")])
-    
-    markup = ReplyKeyboardMarkup(keyboard=keyboard_buttons, resize_keyboard=True)
+    # Faqat Tugallash tugmasini ko'rsatamiz
+    markup = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Tugallash / Zayavkani yuborish 📨")]],
+        resize_keyboard=True
+    )
     
     await message.answer(
-        "Rahmat. Endi zayavkaga kiruvchi mahsulot nomini yuboring:\n"
-        "Quyidagi tugmalardan tanlashingiz yoki yangi nom yozishingiz mumkin.\n"
-        "Barcha mahsulotlarni qo'shib bo'lgach 'Tugallash' tugmasini bosing.",
+        "Rahmat. Endi zayavkaga kiruvchi mahsulot nomini yozib yuboring:\n"
+        "Barcha mahsulotlarni qo'shib bo'lgach 'Tugallash / Zayavkani yuborish 📨' tugmasini bosing.",
         reply_markup=markup
     )
     await state.set_state(RequestCreationStates.waiting_for_item_name)
@@ -158,25 +145,15 @@ async def process_item_qty(message: Message, state: FSMContext):
     
     await state.update_data(items=items)
     
-    # Qayta klaviaturani ko'rsatish
-    stock = await db.get_all_inventory()
-    keyboard_buttons = []
-    
-    row = []
-    for item in stock:
-        row.append(KeyboardButton(text=item['name']))
-        if len(row) == 2:
-            keyboard_buttons.append(row)
-            row = []
-    if row:
-        keyboard_buttons.append(row)
-        
-    keyboard_buttons.append([KeyboardButton(text="Tugallash / Zayavkani yuborish 📨")])
-    markup = ReplyKeyboardMarkup(keyboard=keyboard_buttons, resize_keyboard=True)
+    # Faqat Tugallash tugmasini ko'rsatamiz
+    markup = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Tugallash / Zayavkani yuborish 📨")]],
+        resize_keyboard=True
+    )
     
     await message.answer(
         f"✅ {data['current_item_name']} - {qty} dona qo'shildi.\n\n"
-        f"Yana mahsulot qo'shasizmi? Nomini yozing yoki tanlang, yoki 'Tugallash' tugmasini bosing:",
+        f"Yana mahsulot qo'shasizmi? Nomini yozing yoki 'Tugallash / Zayavkani yuborish 📨' tugmasini bosing:",
         reply_markup=markup
     )
     await state.set_state(RequestCreationStates.waiting_for_item_name)

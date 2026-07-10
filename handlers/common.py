@@ -67,13 +67,13 @@ def get_main_keyboard(role: str):
     keyboard = []
     if role == 'super_admin':
         keyboard = [
-            [KeyboardButton(text="Tasdiqlash kutilayotganlar 👥"), KeyboardButton(text="Foydalanuvchilar ro'yxati 📋")],
-            [KeyboardButton(text="Tasdiqlash kutilayotgan zayavkalar 📥"), KeyboardButton(text="Barcha zayavkalar 📝")],
+            [KeyboardButton(text="A'zolik so'rovlari 👥"), KeyboardButton(text="Foydalanuvchilar ro'yxati 📋")],
+            [KeyboardButton(text="Kutilayotgan zayavkalar 📥"), KeyboardButton(text="Barcha zayavkalar 📝")],
             [KeyboardButton(text="Excel hisobot yuklab olish 📊"), KeyboardButton(text="Ombor qoldiqlari 📦")]
         ]
     elif role == 'manager':
         keyboard = [
-            [KeyboardButton(text="Tasdiqlash kutilayotgan zayavkalar 📥")],
+            [KeyboardButton(text="Kutilayotgan zayavkalar 📥")],
             [KeyboardButton(text="Barcha zayavkalar 📝"), KeyboardButton(text="Foydalanuvchilar ro'yxati 📋")],
             [KeyboardButton(text="Excel hisobot yuklab olish 📊"), KeyboardButton(text="Ombor qoldiqlari 📦")]
         ]

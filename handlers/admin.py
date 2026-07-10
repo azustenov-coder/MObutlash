@@ -15,7 +15,7 @@ def get_approve_keyboard(telegram_id: int):
         ]
     ])
 
-@router.message(F.text == "Tasdiqlash kutilayotganlar 👥")
+@router.message(F.text == "A'zolik so'rovlari 👥")
 async def show_pending_users(message: Message):
     # Foydalanuvchi admin ekanligini tekshiramiz
     user = await db.get_user(message.from_user.id)

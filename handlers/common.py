@@ -3,6 +3,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+import re
 import database as db
 
 router = Router()
@@ -22,6 +23,32 @@ ROLE_LABELS = {
 }
 
 ROLE_REVERSE = {v: k for k, v in ROLE_LABELS.items()}
+
+def get_role_by_input(text: str) -> str:
+    if not text:
+        return None
+    cleaned = text.lower().strip()
+    cleaned = re.sub(r'[^\w\s]', '', cleaned)
+    cleaned = cleaned.strip()
+    
+    matches = {
+        'boshqaruvchi': 'manager',
+        'manager': 'manager',
+        'kuzatuvchi': 'observer',
+        'observer': 'observer',
+        'mexanik': 'mechanic',
+        'mechanic': 'mechanic',
+        'brigadir': 'brigadier',
+        'brigadir br': 'brigadier',
+        'brigadier': 'brigadier',
+        'yetkazib beruvchi': 'courier',
+        'kuryer': 'courier',
+        'courier': 'courier',
+        'skladchik': 'warehouseman',
+        'omborchi': 'warehouseman',
+        'warehouseman': 'warehouseman'
+    }
+    return matches.get(cleaned)
 
 def get_role_keyboard():
     keyboard = []
@@ -171,7 +198,7 @@ async def process_phone(message: Message, state: FSMContext):
 @router.message(RegistrationStates.waiting_for_role)
 async def process_role(message: Message, state: FSMContext):
     selected_role_label = message.text
-    role_key = ROLE_REVERSE.get(selected_role_label)
+    role_key = get_role_by_input(selected_role_label)
     
     if not role_key:
         await message.answer(

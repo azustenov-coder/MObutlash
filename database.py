@@ -157,8 +157,8 @@ async def get_request(request_id: int):
 async def update_request_status(request_id: int, status: str, updated_by_id: int, role: str):
     async with aiosqlite.connect(DB_PATH) as db:
         now = datetime.datetime.now().isoformat()
-        if role == 'manager':
-            if status == 'approved':
+        if role in ['manager', 'super_admin']:
+            if status in ['approved', 'pending_admin_approval']:
                 await db.execute("""
                     UPDATE requests SET status = ?, approved_by = ?, updated_at = ? WHERE id = ?
                 """, (status, updated_by_id, now, request_id))
@@ -274,6 +274,7 @@ async def export_requests_to_excel():
 
     STATUS_LABELS_UZ = {
         'pending_approval': 'Tasdiqlash kutilmoqda',
+        'pending_admin_approval': 'Admin kutilmoqda',
         'approved': 'Tasdiqlangan',
         'delivering': "Yo'lda",
         'waiting_receipt': 'Qabul kutilmoqda',
@@ -292,6 +293,7 @@ async def export_requests_to_excel():
 
     COLOR_STATUS = {
         'pending_approval': "FFF2CC",  # sariq
+        'pending_admin_approval': "FFE699",  # to'qroq sariq
         'approved':         "E2EFDA",  # yashil
         'delivering':       "FCE4D6",  # to'q sariq
         'waiting_receipt':  "DDEBF7",  # ko'k

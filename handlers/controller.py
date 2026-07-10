@@ -6,30 +6,36 @@ router = Router()
 
 STATUS_LABELS = {
     'pending_approval': 'Tasdiqlash kutilmoqda ⏳',
+    'pending_admin_approval': 'Boshqaruvchi tasdiqlagan (Admin kutilmoqda) ⏳',
     'approved': 'Tasdiqlangan (Kuryer kutilmoqda) 🚚',
     'delivering': 'Yo\'lda 🛣️',
     'completed': 'Qabul qilindi va yakunlandi ✅',
     'rejected': 'Rad etildi ❌'
 }
 
-def get_request_manage_keyboard(request_id: int):
+def get_request_manage_keyboard(request_id: int, is_admin: bool = False):
+    prefix = "req_admin_" if is_admin else "req_"
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Tasdiqlash ✅", callback_data=f"req_approve_{request_id}"),
-            InlineKeyboardButton(text="Rad etish ❌", callback_data=f"req_reject_{request_id}")
+            InlineKeyboardButton(text="Tasdiqlash ✅", callback_data=f"{prefix}approve_{request_id}"),
+            InlineKeyboardButton(text="Rad etish ❌", callback_data=f"{prefix}reject_{request_id}")
         ]
     ])
 
 @router.message(F.text == "Tasdiqlash kutilayotgan zayavkalar 📥")
 async def list_pending_requests(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] != 'manager':
+    if not user or user['role'] not in ['manager', 'super_admin']:
         await message.answer("Sizda ushbu komandani bajarish uchun huquq yo'q.")
         return
         
-    pending = await db.get_requests_by_status('pending_approval')
+    is_admin = (user['role'] == 'super_admin')
+    status_to_fetch = 'pending_admin_approval' if is_admin else 'pending_approval'
+    
+    pending = await db.get_requests_by_status(status_to_fetch)
     if not pending:
-        await message.answer("Hozirda tasdiqlash kutilayotgan zayavkalar yo'q.")
+        msg_text = "Hozirda tasdiqlashingiz kutilayotgan zayavkalar yo'q."
+        await message.answer(msg_text)
         return
         
     for r in pending:
@@ -52,7 +58,7 @@ async def list_pending_requests(message: Message):
         )
         await message.answer(
             text, 
-            reply_markup=get_request_manage_keyboard(r['id']),
+            reply_markup=get_request_manage_keyboard(r['id'], is_admin=is_admin),
             parse_mode="Markdown"
         )
 
@@ -70,9 +76,9 @@ async def approve_request(callback: CallbackQuery):
         await callback.message.delete()
         return
         
-    # Statusni 'approved' ga o'zgartirish
-    await db.update_request_status(request_id, 'approved', callback.from_user.id, 'manager')
-    await callback.answer("Zayavka tasdiqlandi va yetkazib beruvchilarga yuborildi.")
+    # Statusni 'pending_admin_approval' ga o'zgartirish (Admin kutilmoqda)
+    await db.update_request_status(request_id, 'pending_admin_approval', callback.from_user.id, 'manager')
+    await callback.answer("Zayavka tasdiqlandi va Super Adminga yuborildi.")
     
     # Zayavka tarkibi
     items = await db.get_request_items(request_id)
@@ -85,9 +91,67 @@ async def approve_request(callback: CallbackQuery):
         )
         
     summary = (
-        f"✅ **Zayavka №{request_id} boshqaruvchi tomonidan tasdiqlandi.**\n"
+        f"✅ **Zayavka №{request_id} boshqaruvchi tomonidan tasdiqlandi (Admin kutilmoqda).**\n"
         f"📋 Tavsif: {req['description']}\n"
         f"👤 Tasdiqladi: {user['full_name']}\n\n"
+        f"🔍 **Mahsulotlar tarkibi:**\n{items_text}"
+    )
+    
+    await callback.message.edit_text(
+        summary,
+        reply_markup=None,
+        parse_mode="Markdown"
+    )
+    
+    # Super adminlarni avtomatik ogohlantirish
+    super_admins = await db.get_users_by_role('super_admin')
+    for sa in super_admins:
+        try:
+            from main import bot
+            await bot.send_message(
+                sa['telegram_id'],
+                f"🔔 **Yangi zayavka Admin tasdiqlovi uchun keldi! (№{request_id})**\n"
+                f"Boshqaruvchi {user['full_name']} tasdiqladi.\n\n"
+                f"Mexanik/Brigadir: {req['creator_name']}\n"
+                f"📋 Tavsif: {req['description']}\n\n"
+                f"🔍 **Mahsulotlar tarkibi:**\n{items_text}\n"
+                f"Tasdiqlash uchun 'Tasdiqlash kutilayotgan zayavkalar 📥' menyusidan foydalaning."
+            )
+        except Exception as e:
+            print(f"Super adminni ogohlantirishda xato: {e}")
+
+@router.callback_query(F.data.startswith("req_admin_approve_"))
+async def admin_approve_request(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    if not user or user['role'] != 'super_admin':
+        await callback.answer("Sizda zayavkani yakuniy tasdiqlash huquqi yo'q!", show_alert=True)
+        return
+        
+    request_id = int(callback.data.split("_")[3])
+    req = await db.get_request(request_id)
+    if not req:
+        await callback.answer("Zayavka topilmadi.")
+        await callback.message.delete()
+        return
+        
+    # Statusni 'approved' ga o'zgartirish (Kuryer kutilmoqda)
+    await db.update_request_status(request_id, 'approved', callback.from_user.id, 'super_admin')
+    await callback.answer("Zayavka yakuniy tasdiqlandi va yetkazib beruvchilarga yuborildi.")
+    
+    # Zayavka tarkibi
+    items = await db.get_request_items(request_id)
+    items_text = ""
+    for item in items:
+        items_text += (
+            f"   • **{item['item_name']}** — So'ralgan: {item['quantity_requested']} dona | "
+            f"Omborda: {item['quantity_available']} | "
+            f"Yetishmaydi (Olinadi): {item['quantity_missing']}\n"
+        )
+        
+    summary = (
+        f"👑 **Zayavka №{request_id} Super Admin tomonidan tasdiqlandi va yetkazishga yuborildi.**\n"
+        f"📋 Tavsif: {req['description']}\n"
+        f"👤 Tasdiqladi: {user['full_name']} (Super Admin)\n\n"
         f"🔍 **Mahsulotlar tarkibi:**\n{items_text}"
     )
     
@@ -113,12 +177,12 @@ async def approve_request(callback: CallbackQuery):
         except Exception as e:
             print(f"Kuryerni ogohlantirishda xato: {e}")
 
-    # Yaratuvchini ogohlantirish
+    # Yaratuvchini (Mexanik/Brigadir) ogohlantirish
     try:
         from main import bot
         await bot.send_message(
             req['created_by'],
-            f"✅ Sizning №{request_id}-sonli zayavkangiz boshqaruvchi tomonidan tasdiqlandi va yetkazib berishga yuborildi."
+            f"✅ Sizning №{request_id}-sonli zayavkangiz yakuniy tasdiqlandi va kuryerlarga yuborildi."
         )
     except Exception as e:
         print(f"Yaratuvchini ogohlantirishda xato: {e}")
@@ -140,7 +204,7 @@ async def reject_request(callback: CallbackQuery):
     await db.update_request_status(request_id, 'rejected', callback.from_user.id, 'manager')
     await callback.answer("Zayavka rad etildi.")
     await callback.message.edit_text(
-        f"❌ **Zayavka №{request_id} rad etildi.**\n"
+        f"❌ **Zayavka №{request_id} boshqaruvchi tomonidan rad etildi.**\n"
         f"📋 Tavsif: {req['description']}\n"
         f"👤 Rad etdi: {user['full_name']}",
         reply_markup=None,
@@ -153,6 +217,40 @@ async def reject_request(callback: CallbackQuery):
         await bot.send_message(
             req['created_by'],
             f"❌ Afsuski, sizning №{request_id}-sonli zayavkangiz boshqaruvchi tomonidan rad etildi."
+        )
+    except Exception as e:
+        print(f"Yaratuvchini ogohlantirishda xato: {e}")
+
+@router.callback_query(F.data.startswith("req_admin_reject_"))
+async def admin_reject_request(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    if not user or user['role'] != 'super_admin':
+        await callback.answer("Sizda zayavkani rad etish huquqi yo'q!", show_alert=True)
+        return
+        
+    request_id = int(callback.data.split("_")[3])
+    req = await db.get_request(request_id)
+    if not req:
+        await callback.answer("Zayavka topilmadi.")
+        await callback.message.delete()
+        return
+        
+    await db.update_request_status(request_id, 'rejected', callback.from_user.id, 'super_admin')
+    await callback.answer("Zayavka rad etildi.")
+    await callback.message.edit_text(
+        f"❌ **Zayavka №{request_id} Super Admin tomonidan rad etildi.**\n"
+        f"📋 Tavsif: {req['description']}\n"
+        f"👤 Rad etdi: {user['full_name']}",
+        reply_markup=None,
+        parse_mode="Markdown"
+    )
+    
+    # Yaratuvchini ogohlantirish
+    try:
+        from main import bot
+        await bot.send_message(
+            req['created_by'],
+            f"❌ Afsuski, sizning №{request_id}-sonli zayavkangiz Super Admin tomonidan rad etildi."
         )
     except Exception as e:
         print(f"Yaratuvchini ogohlantirishda xato: {e}")

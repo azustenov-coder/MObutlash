@@ -68,7 +68,7 @@ def get_main_keyboard(role: str):
     if role == 'super_admin':
         keyboard = [
             [KeyboardButton(text="Tasdiqlash kutilayotganlar 👥"), KeyboardButton(text="Foydalanuvchilar ro'yxati 📋")],
-            [KeyboardButton(text="Barcha zayavkalar 📝")],
+            [KeyboardButton(text="Tasdiqlash kutilayotgan zayavkalar 📥"), KeyboardButton(text="Barcha zayavkalar 📝")],
             [KeyboardButton(text="Excel hisobot yuklab olish 📊"), KeyboardButton(text="Ombor qoldiqlari 📦")]
         ]
     elif role == 'manager':

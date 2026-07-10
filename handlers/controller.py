@@ -267,8 +267,9 @@ async def show_all_requests(message: Message):
         await message.answer("Tizimda hech qanday zayavka yo'q.")
         return
         
-    text = "📝 **Barcha zayavkalar ro'yxati:**\n\n"
-    for r in requests[:20]:  # So'nggi 20 tasini ko'rsatamiz
+    await message.answer("📝 **Zayavkalar ro'yxati (oxirgi 10 ta):**")
+    
+    for r in requests[:10]:
         status_label = STATUS_LABELS.get(r['status'], r['status'])
         
         # Mahsulotlarni olamiz
@@ -277,18 +278,21 @@ async def show_all_requests(message: Message):
         for item in items:
             items_text += f"   • {item['item_name']}: {item['quantity_requested']} ta (Yetishmaydi: {item['quantity_missing']})\n"
             
-        text += (
+        text = (
             f"🆔 **Zayavka №{r['id']}**\n"
             f"👤 Yaratuvchi: {r['creator_name']}\n"
             f"📋 Tavsif: {r['description']}\n"
             f"⚙️ Holati: {status_label}\n"
             f"🔍 Mahsulotlar:\n{items_text}"
-            f"📅 Sana: {r['created_at'][:16].replace('T', ' ')}\n"
-            f"-------------------\n"
+            f"📅 Sana: {r['created_at'][:16].replace('T', ' ')}"
         )
         
-    if len(text) > 4000:
-        for x in range(0, len(text), 4000):
-            await message.answer(text[x:x+4000], parse_mode="Markdown")
-    else:
-        await message.answer(text, parse_mode="Markdown")
+        # Boshqaruvchi uchun tasdiqlash tugmalari (agar status pending_approval bo'lsa)
+        # Super Admin uchun tasdiqlash tugmalari (agar status pending_admin_approval bo'lsa)
+        reply_markup = None
+        if user['role'] == 'manager' and r['status'] == 'pending_approval':
+            reply_markup = get_request_manage_keyboard(r['id'], is_admin=False)
+        elif user['role'] == 'super_admin' and r['status'] == 'pending_admin_approval':
+            reply_markup = get_request_manage_keyboard(r['id'], is_admin=True)
+            
+        await message.answer(text, reply_markup=reply_markup, parse_mode="Markdown")

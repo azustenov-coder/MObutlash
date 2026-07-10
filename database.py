@@ -396,13 +396,29 @@ async def export_requests_to_excel():
         for r in rows
     ]
 
+    column_widths = [width for _, width in headers_zayavka]
     for data_row_idx, row_vals_item in enumerate(row_vals, start=3):
         status_key = rows[data_row_idx - 3]['status']
         for col_idx, val in enumerate(row_vals_item, start=1):
             cell = ws1.cell(row=data_row_idx, column=col_idx, value=val)
             is_num = col_idx in (1, 10, 11, 12)
             data_cell(cell, val, data_row_idx, status_key, is_num)
-        ws1.row_dimensions[data_row_idx].height = 20
+            
+        # Dinamik qator balandligini hisoblash (matn uzunligiga qarab)
+        max_lines = 1
+        for val, width in zip(row_vals_item, column_widths):
+            if val is not None and isinstance(val, str):
+                # Yangi qator belgilarini hisoblash
+                lines = val.count('\n') + 1
+                # Uzun satrlarning qatorga bo'linishini hisoblash
+                for part in val.split('\n'):
+                    part_len = len(part)
+                    effective_width = max(5, width - 2)
+                    if part_len > effective_width:
+                        lines += (part_len - 1) // effective_width
+                max_lines = max(max_lines, lines)
+                
+        ws1.row_dimensions[data_row_idx].height = max(20, max_lines * 15 + 5)
 
     # Freeze panes: 1-qator va 2-qatorni muzlatish
     ws1.freeze_panes = "A3"

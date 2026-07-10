@@ -1,0 +1,6 @@
+{
+  "name": "MO Bot Dashboard",
+  "description": "Super admin dashboard for real-time monitoring of Telegram bot activities across logistic roles: managers, mechanics, brigadiers, dispatchers, suppliers, and storekeepers, featuring live feeds, performance analytics, and daily report exports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

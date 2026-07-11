@@ -58,6 +58,8 @@ interface TransportOrder {
   destination: string;
   status: "Кутиляпти" | "Юкланмоқда" | "Йўлда" | "Етказилди";
   progress: number;
+  speed: number;
+  gpsStatus: "Faol" | "Oflayn" | "Yuklanmoqda";
 }
 
 interface MechanicReport {
@@ -67,6 +69,17 @@ interface MechanicReport {
   status: "Соз" | "Таъмирланмоқда" | "Кутиш жараёнида";
   assignedMechanic: string;
   fuelDistributed: number; // in Liters
+}
+
+interface AttendanceLog {
+  id: string;
+  employeeName: string;
+  role: string;
+  timestamp: string;
+  timeFormatted: string;
+  status: "Kirish" | "Chiqish" | "Kechikdi";
+  deviceId: string;
+  deviceName: string;
 }
 
 // Setup initial simulated state
@@ -151,13 +164,16 @@ let botEvents: BotEvent[] = [
 ];
 
 let inventory: InventoryItem[] = [
-  { name: "Цемент М500", category: "Қурилиш", quantity: 185, unit: "тонна", status: "Нормал", minThreshold: 30 },
-  { name: "Арматура А500С", category: "Металл", quantity: 42, unit: "тонна", status: "Нормал", minThreshold: 15 },
-  { name: "Ғишт (Пишган)", category: "Деворий", quantity: 65000, unit: "дона", status: "Нормал", minThreshold: 10000 },
-  { name: "Шағал", category: "Инерт", quantity: 120, unit: "м³", status: "Нормал", minThreshold: 40 },
-  { name: "Қум (Ювилган)", category: "Инерт", quantity: 8, unit: "м³", status: "Кам қолди", minThreshold: 25 },
-  { name: "Дизель ёқилғиси", category: "Ёқилғи", quantity: 1800, unit: "литр", status: "Нормал", minThreshold: 1000 },
-  { name: "Шпатлевка", category: "Пардоз", quantity: 0, unit: "қоп", status: "Тугади", minThreshold: 50 }
+  { name: "Бетон блоки FBS", category: "Тайёр маҳсулот", quantity: 85, unit: "дона", status: "Нормал", minThreshold: 20 },
+  { name: "Тротуар плиткаси", category: "Тайёр маҳсулот", quantity: 450, unit: "м²", status: "Нормал", minThreshold: 100 },
+  { name: "Йўл бордюри", category: "Тайёр маҳсулот", quantity: 20, unit: "дона", status: "Кам қолди", minThreshold: 50 },
+  { name: "Цемент М500", category: "Бутловчи маҳсулот", quantity: 185, unit: "тонна", status: "Нормал", minThreshold: 30 },
+  { name: "Арматура А500С", category: "Бутловчи маҳсулот", quantity: 42, unit: "тонна", status: "Нормал", minThreshold: 15 },
+  { name: "Ғишт (Пишган)", category: "Бутловчи маҳсулот", quantity: 65000, unit: "дона", status: "Нормал", minThreshold: 10000 },
+  { name: "Шағал", category: "Бутловчи маҳсулот", quantity: 120, unit: "м³", status: "Нормал", minThreshold: 40 },
+  { name: "Қум (Ювилган)", category: "Бутловчи маҳсулот", quantity: 8, unit: "м³", status: "Кам қолди", minThreshold: 25 },
+  { name: "Дизель ёқилғиси", category: "Бутловчи маҳсулот", quantity: 1800, unit: "литр", status: "Нормал", minThreshold: 1000 },
+  { name: "Шпатлевка", category: "Бутловчи маҳсулот", quantity: 0, unit: "қоп", status: "Тугади", minThreshold: 50 }
 ];
 
 let transportOrders: TransportOrder[] = [
@@ -167,9 +183,11 @@ let transportOrders: TransportOrder[] = [
     vehicle: "MAN (01 777 AAA)",
     material: "Цемент ва Арматура",
     quantity: "17 тонна",
-    destination: "Сергели-5 объекти",
+    destination: "Tinchlik MFY Ob'ekti",
     status: "Йўлда",
-    progress: 75
+    progress: 75,
+    speed: 62,
+    gpsStatus: "Faol"
   },
   {
     id: "TR-1025",
@@ -177,9 +195,11 @@ let transportOrders: TransportOrder[] = [
     vehicle: "Howo (01 456 CCC)",
     material: "Шағал",
     quantity: "20 м³",
-    destination: "Чилонзор 9-даҳа",
+    destination: "Navro'z MFY Ob'ekti",
     status: "Юкланмоқда",
-    progress: 15
+    progress: 15,
+    speed: 0,
+    gpsStatus: "Yuklanmoqda"
   },
   {
     id: "TR-1026",
@@ -187,9 +207,11 @@ let transportOrders: TransportOrder[] = [
     vehicle: "Isuzu (01 987 DDD)",
     material: "Ғишт (15,000 дона)",
     quantity: "15,000 дона",
-    destination: "Юnuсобод 12-даҳаси",
+    destination: "Gulbahor Qo'rg'oni",
     status: "Кутиляпти",
-    progress: 0
+    progress: 0,
+    speed: 0,
+    gpsStatus: "Faol"
   }
 ];
 
@@ -198,6 +220,49 @@ let mechanicStatus: MechanicReport[] = [
   { id: "VEH-102", vehicle: "Howo (01 456 CCC)", issue: "Гидравлика мойи алмаштирилди", status: "Соз", assignedMechanic: "Сардор Алиев", fuelDistributed: 180 },
   { id: "VEH-103", vehicle: "KamAZ (01 123 BBB)", issue: "Тормоз тизимидаги носозлик", status: "Таъмирланмоқда", assignedMechanic: "Сардор Алиев", fuelDistributed: 0 },
   { id: "VEH-104", vehicle: "Isuzu (01 987 DDD)", issue: "Мотор тақиллаши аниқланди", status: "Кутиш жараёнида", assignedMechanic: "Сардор Алиев", fuelDistributed: 80 }
+];
+
+let attendanceLogs: AttendanceLog[] = [
+  {
+    id: "ATT_101",
+    employeeName: "Сардор Алиев",
+    role: "mexanik",
+    timestamp: new Date(Date.now() - 3.8 * 3600000).toISOString(),
+    timeFormatted: "08:02",
+    status: "Kirish",
+    deviceId: "ZK-F22-01",
+    deviceName: "ZKTeco F22 (Garaj)"
+  },
+  {
+    id: "ATT_102",
+    employeeName: "Диёр Шукуrov",
+    role: "boshqaruvchi",
+    timestamp: new Date(Date.now() - 3.7 * 3600000).toISOString(),
+    timeFormatted: "08:05",
+    status: "Kirish",
+    deviceId: "ZK-F22-02",
+    deviceName: "ZKTeco F22 (Ofis)"
+  },
+  {
+    id: "ATT_103",
+    employeeName: "Фарҳод Каримов",
+    role: "brigadir",
+    timestamp: new Date(Date.now() - 3.5 * 3600000).toISOString(),
+    timeFormatted: "08:15",
+    status: "Kirish",
+    deviceId: "ZK-F22-03",
+    deviceName: "ZKTeco F22 (Sklad)"
+  },
+  {
+    id: "ATT_104",
+    employeeName: "Елена Петрова",
+    role: "skladchik",
+    timestamp: new Date(Date.now() - 3.2 * 3600000).toISOString(),
+    timeFormatted: "08:20",
+    status: "Kirish",
+    deviceId: "ZK-F22-03",
+    deviceName: "ZKTeco F22 (Sklad)"
+  }
 ];
 
 // Active SSE client connections
@@ -229,9 +294,9 @@ const eventTemplates: {
       const items = ["Цемент М500", "Арматура А500С", "Ғишт (Пишган)", "Шағал", "Қум (Ювилган)"];
       const selected = items[Math.floor(Math.random() * items.length)];
       const val = selected.includes("Ғишт") ? "5000 дона" : (selected.includes("Қум") || selected.includes("Шағал") ? "15 м³" : "8 тонна");
-      const subObj = ["Қорақамиш-3", "Тошкент Сити Бўлим 4", "Олмазор Резиденция", "Юнусобод 19-мавзе"][Math.floor(Math.random() * 4)];
+      const subObj = ["Tinchlik MFY Ob'ekti", "Navro'z MFY Ob'ekti", "Gulbahor Qo'rg'oni", "Niyozbosh Ob'ekti", "Binokor MFY Ob'ekti", "Vokzal Ob'ekti"][Math.floor(Math.random() * 6)];
       return {
-        text: `Объект: ${subObj} учун шошилинч ${val} ${selected} сўраб буюртма яратди.`
+        text: `Объект: ${subObj} учун shoishilinch ${val} ${selected} so'rab buyurtma yaratdi.`
       };
     }
   },
@@ -241,9 +306,9 @@ const eventTemplates: {
     status: "Тасдиқланди",
     detailsGenerator: () => {
       const driver = firstNames[Math.floor(Math.random() * firstNames.length)] + " " + lastNames[Math.floor(Math.random() * lastNames.length)];
-      const loc = ["Қорақамиш", "Юнусобод", "Сергели", "Олмазор"][Math.floor(Math.random() * 4)];
+      const loc = ["Tinchlik MFY", "Navro'z MFY", "Gulbahor", "Niyozbosh", "Binokor MFY", "Vokzal"][Math.floor(Math.random() * 6)];
       return {
-        text: `Оператор ${driver}га янги транспорт маршрутини режалаштирди. Манзил: ${loc} қурилиш участкаси.`,
+        text: `Оператор ${driver}га янги транспорт маршрутини режалаштирdi. Манзил: ${loc} қурилиш участкаси.`,
         updateState: () => {
           const id = "TR-" + Math.floor(1000 + Math.random() * 9000);
           transportOrders.push({
@@ -252,9 +317,11 @@ const eventTemplates: {
             vehicle: ["MAN (01 777 AAA)", "Howo (01 456 CCC)", "Isuzu (01 987 DDD)"][Math.floor(Math.random() * 3)],
             material: ["Цемент", "Ғишт", "Арматура", "Шағал"][Math.floor(Math.random() * 4)],
             quantity: Math.floor(5 + Math.random() * 15) + " бирлик",
-            destination: loc + " Объекти",
+            destination: loc + " Ob'ekti",
             status: "Юкланмоқда",
-            progress: 10
+            progress: 10,
+            speed: 0,
+            gpsStatus: "Yuklanmoqda"
           });
         }
       };
@@ -312,6 +379,8 @@ const eventTemplates: {
         text = `Ҳайдовчи ${order.driverName} юкни (${order.material}, ${order.quantity}) ${order.destination} манзилига хавфсиз етказди.`;
         transportOrders[pendingIdx].status = "Етказилди";
         transportOrders[pendingIdx].progress = 100;
+        transportOrders[pendingIdx].speed = 0;
+        transportOrders[pendingIdx].gpsStatus = "Faol";
       }
       return { text };
     }
@@ -333,6 +402,47 @@ const eventTemplates: {
             fuel.status = fuel.quantity <= fuel.minThreshold ? "Кам қолди" : "Нормал";
           }
         }
+      };
+    }
+  },
+  {
+    role: "mexanik",
+    action: "Barmoq izi bosildi 👆",
+    status: "Бажарилди",
+    detailsGenerator: () => {
+      const roles: ("boshqaruvchi" | "mexanik" | "brigadir" | "br" | "yetkazib_beruvchi" | "skladchik")[] = ["mexanik", "brigadir", "skladchik", "yetkazib_beruvchi", "boshqaruvchi"];
+      const r = roles[Math.floor(Math.random() * roles.length)];
+      const fName = firstNames[Math.floor(Math.random() * firstNames.length)];
+      const lName = lastNames[Math.floor(Math.random() * lastNames.length)];
+      const name = `${fName} ${lName}`;
+      const statuses: ("Kirish" | "Chiqish" | "Kechikdi")[] = ["Kirish", "Kirish", "Kirish", "Chiqish"];
+      const status = statuses[Math.floor(Math.random() * statuses.length)];
+      const devices = [
+        { id: "ZK-F22-01", name: "ZKTeco F22 (Garaj)" },
+        { id: "ZK-F22-02", name: "ZKTeco F22 (Ofis)" },
+        { id: "ZK-F22-03", name: "ZKTeco F22 (Sklad)" }
+      ];
+      const dev = devices[Math.floor(Math.random() * devices.length)];
+      
+      const updateState = () => {
+        attendanceLogs.unshift({
+          id: "ATT_" + Math.floor(100 + Math.random() * 900),
+          employeeName: name,
+          role: r,
+          timestamp: new Date().toISOString(),
+          timeFormatted: new Date().toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" }),
+          status,
+          deviceId: dev.id,
+          deviceName: dev.name
+        });
+        if (attendanceLogs.length > 50) {
+          attendanceLogs.pop();
+        }
+      };
+
+      return {
+        text: `Xodim ${name} (${r}) ${dev.name} qurilmasida barmoq izini bosdi. Holat: ${status}.`,
+        updateState
       };
     }
   }
@@ -385,17 +495,22 @@ app.get("/api/state", (req, res) => {
   const pendingOrdersCount = transportOrders.filter(t => t.status === "Йўлда" || t.status === "Юкланмоқда" || t.status === "Кутиляпти").length;
   const activeVehiclesCount = mechanicStatus.filter(m => m.status === "Соз").length;
   const criticalMaterialsCount = inventory.filter(i => i.quantity <= i.minThreshold).length;
+  const activeEmployeesCount = new Set(
+    attendanceLogs.filter(a => a.status === "Kirish").map(a => a.employeeName)
+  ).size;
 
   res.json({
     logs: botEvents,
     inventory,
     transportOrders,
     mechanicStatus,
+    attendanceLogs,
     stats: {
       totalLogsCount,
       pendingOrdersCount,
       activeVehiclesCount,
-      criticalMaterialsCount
+      criticalMaterialsCount,
+      activeEmployeesCount
     }
   });
 });
@@ -426,7 +541,7 @@ app.post("/api/trigger-simulation", (req, res) => {
 app.get("/api/download-report", (req, res) => {
   // Map botEvents to row array for xlsx export
   const rows = botEvents.map((e, index) => ({
-    "№": index + 1,
+    "T/r": index + 1,
     "ID": e.id,
     "Сана / Вақт": e.timeFormatted,
     "Роль / Lavozim": e.role,
@@ -446,7 +561,7 @@ app.get("/api/download-report", (req, res) => {
 
   // Adjust column widths
   ws["!cols"] = [
-    { wch: 6 },   // №
+    { wch: 6 },   // T/r
     { wch: 12 },  // ID
     { wch: 14 },  // Sana / Vaqt
     { wch: 20 },  // Rol
@@ -534,6 +649,44 @@ Iltimos, hisobotni juda o'qishga oson, chiroyli Markdown formatida va foydali ma
     });
   }
 });
+
+// Background tick to simulate vehicle progress and speed
+setInterval(() => {
+  transportOrders = transportOrders.map((order) => {
+    if (order.status === "Йўлда") {
+      const newProgress = Math.min(100, order.progress + Math.floor(Math.random() * 5) + 2);
+      const isArrived = newProgress >= 100;
+      return {
+        ...order,
+        progress: newProgress,
+        status: isArrived ? "Етказилди" : "Йўлда",
+        speed: isArrived ? 0 : Math.floor(50 + Math.random() * 20),
+        gpsStatus: isArrived ? "Faol" : "Faol"
+      };
+    } else if (order.status === "Юкланмоқда") {
+      const newProgress = Math.min(100, order.progress + Math.floor(Math.random() * 8) + 4);
+      const isLoaded = newProgress >= 100;
+      return {
+        ...order,
+        progress: isLoaded ? 0 : newProgress,
+        status: isLoaded ? "Йўлда" : "Юкланмоқда",
+        speed: 0,
+        gpsStatus: "Yuklanmoqda"
+      };
+    } else if (order.status === "Кутиляпти") {
+      if (Math.random() > 0.7) {
+        return {
+          ...order,
+          status: "Юкланмоқда",
+          progress: 5,
+          speed: 0,
+          gpsStatus: "Yuklanmoqda"
+        };
+      }
+    }
+    return order;
+  });
+}, 4000);
 
 // Vite Dev Server / Production Static Serving
 async function startServer() {

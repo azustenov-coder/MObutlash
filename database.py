@@ -2,6 +2,14 @@ import aiosqlite
 import datetime
 from config import DB_PATH
 
+PREDEFINED_VEHICLES = [
+    "102", "103", "106", "107", "108", "109", "112", "115", "117", "122",
+    "123", "477", "478", "480", "481", "482", "484", "485", "488", "492",
+    "493", "494", "497", "615", "617", "499", "489", "487", "124", "125",
+    "126", "127", "9154", "9155", "9156", "9157", "9158", "9159", "361",
+    "362", "364", "809", "810", "961"
+]
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         # Foydalanuvchilar jadvali
@@ -53,6 +61,44 @@ async def init_db():
                 FOREIGN KEY (request_id) REFERENCES requests (id)
             )
         """)
+        # Check if category column exists, if not add it
+        async with db.execute("PRAGMA table_info(inventory)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
+            if 'category' not in columns:
+                await db.execute("ALTER TABLE inventory ADD COLUMN category TEXT NOT NULL DEFAULT 'butlovchi'")
+        
+        # Check if vehicle_name and old_part_photo exist in requests
+        async with db.execute("PRAGMA table_info(requests)") as cursor:
+            req_cols = [row[1] for row in await cursor.fetchall()]
+            if 'vehicle_name' not in req_cols:
+                await db.execute("ALTER TABLE requests ADD COLUMN vehicle_name TEXT")
+            if 'old_part_photo' not in req_cols:
+                await db.execute("ALTER TABLE requests ADD COLUMN old_part_photo TEXT")
+            if 'installed_part_photo' not in req_cols:
+                await db.execute("ALTER TABLE requests ADD COLUMN installed_part_photo TEXT")
+            if 'quantity_used' not in req_cols:
+                await db.execute("ALTER TABLE requests ADD COLUMN quantity_used INTEGER")
+            if 'quantity_left' not in req_cols:
+                await db.execute("ALTER TABLE requests ADD COLUMN quantity_left INTEGER")
+            if 'request_type' not in req_cols:
+                await db.execute("ALTER TABLE requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'repair'")
+                
+        # Vehicles table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS vehicles (
+                name TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'soz',
+                reason TEXT
+            )
+        """)
+        async with db.execute("PRAGMA table_info(vehicles)") as cursor:
+            veh_cols = [row[1] for row in await cursor.fetchall()]
+            if 'reason' not in veh_cols:
+                await db.execute("ALTER TABLE vehicles ADD COLUMN reason TEXT")
+                
+        for veh in PREDEFINED_VEHICLES:
+            await db.execute("INSERT OR IGNORE INTO vehicles (name, status) VALUES (?, 'soz')", (veh,))
+            
         await db.commit()
 
 
@@ -126,13 +172,13 @@ async def get_users_by_role(role: str):
 
 # --- ZAYAVKALAR (SO'ROVLAR) BILAN ISHLASH ---
 
-async def create_request(created_by: int, description: str):
+async def create_request(created_by: int, description: str, vehicle_name: str = None, old_part_photo: str = None, qty_used: int = None, qty_left: int = None, request_type: str = 'repair'):
     async with aiosqlite.connect(DB_PATH) as db:
         now = datetime.datetime.now().isoformat()
         cursor = await db.execute("""
-            INSERT INTO requests (created_by, description, status, created_at, updated_at)
-            VALUES (?, ?, 'pending_approval', ?, ?)
-        """, (created_by, description, now, now))
+            INSERT INTO requests (created_by, description, status, created_at, updated_at, vehicle_name, old_part_photo, quantity_used, quantity_left, request_type)
+            VALUES (?, ?, 'pending_approval', ?, ?, ?, ?, ?, ?, ?)
+        """, (created_by, description, now, now, vehicle_name, old_part_photo, qty_used, qty_left, request_type))
         await db.commit()
         return cursor.lastrowid
 
@@ -180,6 +226,76 @@ async def update_request_status(request_id: int, status: str, updated_by_id: int
             """, (status, now, request_id))
         await db.commit()
 
+async def update_installed_part_photo(request_id: int, photo_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        now = datetime.datetime.now().isoformat()
+        await db.execute("""
+            UPDATE requests SET installed_part_photo = ?, updated_at = ? WHERE id = ?
+        """, (photo_id, now, request_id))
+        await db.commit()
+
+async def get_broken_vehicles():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT name FROM vehicles WHERE status = 'nosoz'") as cursor:
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+
+async def get_healthy_vehicles():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT name FROM vehicles WHERE status = 'soz'") as cursor:
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+
+async def get_all_vehicles():
+    return PREDEFINED_VEHICLES
+
+async def update_vehicle_status(name: str, status: str, reason: str = None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE vehicles SET status = ?, reason = ? WHERE name = ?", (status, reason, name.strip()))
+        await db.commit()
+
+async def check_vehicle_active_requests(name: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT COUNT(*) FROM requests 
+            WHERE vehicle_name = ? AND status NOT IN ('completed', 'rejected')
+        """, (name.strip(),)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] > 0 if row else False
+
+async def update_request_installation_details(request_id: int, photo_id: str, qty_used: int, qty_left: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        now = datetime.datetime.now().isoformat()
+        await db.execute("""
+            UPDATE requests 
+            SET installed_part_photo = ?, quantity_used = ?, quantity_left = ?, updated_at = ? 
+            WHERE id = ?
+        """, (photo_id, qty_used, qty_left, now, request_id))
+        await db.commit()
+        
+    items = await get_request_items(request_id)
+    for item in items:
+        await add_or_update_inventory_item(item['item_name'], -qty_used)
+
+async def update_request_details(request_id: int, description: str, vehicle_name: str, old_part_photo: str, qty_used: int = None, qty_left: int = None, request_type: str = 'repair'):
+    async with aiosqlite.connect(DB_PATH) as db:
+        now = datetime.datetime.now().isoformat()
+        await db.execute("""
+            UPDATE requests 
+            SET description = ?, vehicle_name = ?, old_part_photo = ?, quantity_used = ?, quantity_left = ?, request_type = ?, status = 'pending_approval', updated_at = ?
+            WHERE id = ?
+        """, (description, vehicle_name, old_part_photo, qty_used, qty_left, request_type, now, request_id))
+        await db.commit()
+
+async def update_request_item(request_id: int, item_name: str, quantity: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE request_items 
+            SET item_name = ?, quantity_requested = ?, quantity_missing = ?, quantity_available = 0
+            WHERE request_id = ?
+        """, (item_name, quantity, quantity, request_id))
+        await db.commit()
+
 async def get_requests_by_status(status: str):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -188,7 +304,7 @@ async def get_requests_by_status(status: str):
             FROM requests r 
             JOIN users u ON r.created_by = u.telegram_id 
             WHERE r.status = ?
-            ORDER BY r.id DESC
+            ORDER BY r.id ASC
         """, (status,)) as cursor:
             return await cursor.fetchall()
 
@@ -199,7 +315,28 @@ async def get_all_requests():
             SELECT r.*, u.full_name as creator_name 
             FROM requests r 
             JOIN users u ON r.created_by = u.telegram_id 
-            ORDER BY r.id DESC
+            ORDER BY r.id ASC
+        """) as cursor:
+            return await cursor.fetchall()
+
+async def get_requests_movement():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM (
+                SELECT r.*, 
+                       u_creator.full_name as creator_name,
+                       u_approver.full_name as approver_name,
+                       u_wh.full_name as warehouseman_name,
+                       u_courier.full_name as courier_name
+                FROM requests r
+                LEFT JOIN users u_creator ON r.created_by = u_creator.telegram_id
+                LEFT JOIN users u_approver ON r.approved_by = u_approver.telegram_id
+                LEFT JOIN users u_wh ON r.warehouse_released_by = u_wh.telegram_id
+                LEFT JOIN users u_courier ON r.courier_id = u_courier.telegram_id
+                ORDER BY r.id DESC
+                LIMIT 15
+            ) ORDER BY id ASC
         """) as cursor:
             return await cursor.fetchall()
 
@@ -208,8 +345,8 @@ async def get_my_requests(telegram_id: int):
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT * FROM requests 
-            WHERE created_by = ? 
-            ORDER BY id DESC
+            WHERE created_by = ? AND status NOT IN ('completed', 'rejected')
+            ORDER BY id ASC
         """, (telegram_id,)) as cursor:
             return await cursor.fetchall()
 
@@ -227,7 +364,7 @@ async def get_all_inventory():
         async with db.execute("SELECT * FROM inventory ORDER BY name") as cursor:
             return await cursor.fetchall()
 
-async def add_or_update_inventory_item(name: str, quantity_change: int):
+async def add_or_update_inventory_item(name: str, quantity_change: int, category: str = 'butlovchi'):
     async with aiosqlite.connect(DB_PATH) as db:
         name_clean = name.strip()
         cursor = await db.execute("SELECT quantity FROM inventory WHERE name = ?", (name_clean,))
@@ -236,7 +373,7 @@ async def add_or_update_inventory_item(name: str, quantity_change: int):
             new_qty = max(0, row[0] + quantity_change)
             await db.execute("UPDATE inventory SET quantity = ? WHERE name = ?", (new_qty, name_clean))
         else:
-            await db.execute("INSERT INTO inventory (name, quantity) VALUES (?, ?)", (name_clean, max(0, quantity_change)))
+            await db.execute("INSERT INTO inventory (name, quantity, category) VALUES (?, ?, ?)", (name_clean, max(0, quantity_change), category))
         await db.commit()
 
 async def add_request_item(request_id: int, item_name: str, quantity_requested: int, quantity_available: int, quantity_missing: int):
@@ -277,6 +414,8 @@ async def export_requests_to_excel():
         'pending_admin_approval': 'Admin kutilmoqda',
         'approved': 'Tasdiqlangan',
         'delivering': "Yo'lda",
+        'searching': 'Qidirilmoqda',
+        'purchased': 'Sotib olindi',
         'waiting_receipt': 'Qabul kutilmoqda',
         'completed': 'Yakunlandi',
         'rejected': 'Rad etildi',
@@ -296,6 +435,8 @@ async def export_requests_to_excel():
         'pending_admin_approval': "FFE699",  # to'qroq sariq
         'approved':         "E2EFDA",  # yashil
         'delivering':       "FCE4D6",  # to'q sariq
+        'searching':        "FFF2CC",  # sariq
+        'purchased':        "FCE4D6",  # to'q sariq
         'waiting_receipt':  "DDEBF7",  # ko'k
         'completed':        "C6EFCE",  # to'q yashil
         'rejected':         "F4CCCC",  # qizil
@@ -331,7 +472,7 @@ async def export_requests_to_excel():
     ws1.sheet_view.showGridLines = False
 
     # Sarlavha satri (1-qator)
-    ws1.merge_cells('A1:L1')
+    ws1.merge_cells('A1:N1')
     title_cell = ws1['A1']
     title_cell.value = "MO BUTLASH — ZAYAVKALAR HISOBOTI"
     title_cell.font = Font(name='Calibri', bold=True, size=14, color=COLOR_HEADER_FONT)
@@ -341,7 +482,7 @@ async def export_requests_to_excel():
 
     # Ustun sarlavhalari (2-qator)
     headers_zayavka = [
-        ("№", 6),
+        ("T/r", 6),
         ("Yaratuvchi (Mexanik/Brigadir)", 28),
         ("Zayavka Tavsifi", 35),
         ("Yaratilgan Vaqt", 18),
@@ -353,6 +494,8 @@ async def export_requests_to_excel():
         ("So'ralgan (dona)", 16),
         ("Omborda Bor Edi", 16),
         ("Keltirildi / Yetishmagan", 20),
+        ("Ishlatildi (dona)", 16),
+        ("Omborda Qoldi (dona)", 18),
     ]
     for col_idx, (hdr, width) in enumerate(headers_zayavka, start=1):
         cell = ws1.cell(row=2, column=col_idx)
@@ -367,14 +510,15 @@ async def export_requests_to_excel():
             SELECT r.id, creator.full_name as creator_name, r.description, r.created_at, r.status,
                    manager.full_name as manager_name, courier.full_name as courier_name,
                    warehouse.full_name as warehouseman_name,
-                   ri.item_name, ri.quantity_requested, ri.quantity_available, ri.quantity_missing
+                   ri.item_name, ri.quantity_requested, ri.quantity_available, ri.quantity_missing,
+                   r.quantity_used, r.quantity_left
             FROM requests r
             LEFT JOIN users creator ON r.created_by = creator.telegram_id
             LEFT JOIN users manager ON r.approved_by = manager.telegram_id
             LEFT JOIN users courier ON r.courier_id = courier.telegram_id
             LEFT JOIN users warehouse ON r.warehouse_released_by = warehouse.telegram_id
             LEFT JOIN request_items ri ON r.id = ri.request_id
-            ORDER BY r.id DESC
+            ORDER BY r.id ASC
         """) as cursor:
             rows = await cursor.fetchall()
 
@@ -392,6 +536,8 @@ async def export_requests_to_excel():
             r['quantity_requested'] or 0,
             r['quantity_available'] or 0,
             r['quantity_missing'] or 0,
+            r['quantity_used'] if r['quantity_used'] is not None else "—",
+            r['quantity_left'] if r['quantity_left'] is not None else "—",
         ]
         for r in rows
     ]
@@ -401,7 +547,7 @@ async def export_requests_to_excel():
         status_key = rows[data_row_idx - 3]['status']
         for col_idx, val in enumerate(row_vals_item, start=1):
             cell = ws1.cell(row=data_row_idx, column=col_idx, value=val)
-            is_num = col_idx in (1, 10, 11, 12)
+            is_num = col_idx in (1, 10, 11, 12, 13, 14)
             data_cell(cell, val, data_row_idx, status_key, is_num)
             
         # Dinamik qator balandligini hisoblash (matn uzunligiga qarab)
@@ -439,7 +585,7 @@ async def export_requests_to_excel():
     ws2.row_dimensions[1].height = 26
 
     # Ustun sarlavhalari
-    inv_headers = [("№", 6), ("Mahsulot Nomi", 35), ("Omborda Bor Miqdor (Dona)", 26)]
+    inv_headers = [("T/r", 6), ("Mahsulot Nomi", 35), ("Omborda Bor Miqdor (Dona)", 26), ("Turi", 22)]
     for col_idx, (hdr, width) in enumerate(inv_headers, start=1):
         cell = ws2.cell(row=2, column=col_idx)
         header_style(cell, hdr)
@@ -449,12 +595,13 @@ async def export_requests_to_excel():
     # Inventory ma'lumotlari
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT name, quantity FROM inventory ORDER BY name") as cursor:
+        async with db.execute("SELECT name, quantity, category FROM inventory ORDER BY name") as cursor:
             inv_items = await cursor.fetchall()
 
     for inv_idx, item in enumerate(inv_items, start=3):
         qty = item['quantity']
         bg = "C6EFCE" if qty > 0 else "F4CCCC"  # yashil = bor, qizil = yo'q
+        category_text = "Tayyor mahsulot" if item['category'] == 'tayyor' else "Butlovchi mahsulot"
 
         num_cell = ws2.cell(row=inv_idx, column=1, value=inv_idx - 2)
         num_cell.font = Font(name='Calibri', size=10, bold=True)
@@ -473,6 +620,12 @@ async def export_requests_to_excel():
         qty_cell.alignment = Alignment(horizontal='center', vertical='center')
         qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         qty_cell.border = thin_border()
+
+        cat_cell = ws2.cell(row=inv_idx, column=4, value=category_text)
+        cat_cell.font = Font(name='Calibri', size=10)
+        cat_cell.alignment = Alignment(horizontal='center', vertical='center')
+        cat_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        cat_cell.border = thin_border()
         ws2.row_dimensions[inv_idx].height = 20
 
     ws2.freeze_panes = "A3"

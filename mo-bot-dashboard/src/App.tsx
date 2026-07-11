@@ -18,7 +18,9 @@ import {
   Layers, 
   History,
   FileSpreadsheet,
-  AlertCircle
+  AlertCircle,
+  Fingerprint,
+  Settings
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { DashboardState, BotEvent } from "./types";
@@ -28,9 +30,54 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"barchasi" | "boshqaruvchi" | "mexanik" | "brigadir" | "br" | "yetkazib_beruvchi" | "skladchik">("barchasi");
+  const [rightTab, setRightTab] = useState<"operatsiyalar" | "davomat">("operatsiyalar");
   const [searchQuery, setSearchQuery] = useState("");
   const [newEventId, setNewEventId] = useState<string | null>(null);
   const [triggeringSim, setTriggeringSim] = useState(false);
+
+  const [selectedMap, setSelectedMap] = useState<"yangiyol" | "toshkent">("yangiyol");
+
+  // GPS Map Coordinates mapping
+  const yangiyolPoints: Record<string, { x: number; y: number; label: string }> = {
+    sklad: { x: 300, y: 170, label: "Ombor (Sklad-1)" },
+    tinchlik: { x: 180, y: 290, label: "Tinchlik MFY" },
+    navruz: { x: 80, y: 210, label: "Navro'z MFY" },
+    gulbahor: { x: 480, y: 60, label: "Gulbahor Qo'rg'oni" },
+    niyozbosh: { x: 200, y: 90, label: "Niyozbosh" },
+    binokor: { x: 280, y: 40, label: "Binokor MFY" },
+    vokzal: { x: 350, y: 130, label: "Yangiyo'l Vokzal" }
+  };
+
+  const toshkentPoints: Record<string, { x: number; y: number; label: string }> = {
+    sklad: { x: 300, y: 170, label: "Ombor (Sklad-1)" },
+    sergeli: { x: 180, y: 290, label: "Sergeli-5" },
+    chilonzor: { x: 80, y: 210, label: "Chilonzor 9" },
+    yunusobod: { x: 480, y: 60, label: "Yunusobod 12" },
+    olmazor: { x: 200, y: 90, label: "Olmazor Res." },
+    qoraqamish: { x: 280, y: 40, label: "Qoraqamish-3" },
+    city: { x: 350, y: 130, label: "Tashkent City" }
+  };
+
+  const mapPoints = selectedMap === "yangiyol" ? yangiyolPoints : toshkentPoints;
+
+  const getDestKey = (dest: string) => {
+    const d = dest.toLowerCase();
+    // Yangiyol keys
+    if (d.includes("tinchlik")) return "tinchlik";
+    if (d.includes("navr") || d.includes("навр")) return "navruz";
+    if (d.includes("gulbahor") || d.includes("гулбаҳор")) return "gulbahor";
+    if (d.includes("niyozbosh") || d.includes("ниёзбош")) return "niyozbosh";
+    if (d.includes("binokor") || d.includes("бинокор")) return "binokor";
+    if (d.includes("vokzal") || d.includes("вокзал")) return "vokzal";
+    // Tashkent keys
+    if (d.includes("sergeli") || d.includes("сергели")) return "sergeli";
+    if (d.includes("chilonzor") || d.includes("чилонзор")) return "chilonzor";
+    if (d.includes("yunusobod") || d.includes("юнусобод")) return "yunusobod";
+    if (d.includes("olmazor") || d.includes("олмазор")) return "olmazor";
+    if (d.includes("qoraqamish") || d.includes("қорақамиш")) return "qoraqamish";
+    if (d.includes("city") || d.includes("сити")) return "city";
+    return null;
+  };
   
   // Gemini AI state
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
@@ -67,6 +114,11 @@ export default function App() {
     updateTime();
     const clockInterval = setInterval(updateTime, 1000);
 
+    // Live GPS polling interval
+    const pollInterval = setInterval(() => {
+      fetchState(false);
+    }, 4000);
+
     // Establish Server-Sent Events (SSE) for Real-time Bot logs
     const eventSource = new EventSource("/api/events");
     
@@ -84,6 +136,7 @@ export default function App() {
     return () => {
       eventSource.close();
       clearInterval(clockInterval);
+      clearInterval(pollInterval);
     };
   }, []);
 
@@ -180,7 +233,7 @@ export default function App() {
     { key: "br", label: "БР Оператори", color: "#60a5fa", bg: "bg-blue-500/10", border: "border-blue-500/30" },
     { key: "brigadir", label: "Бригадир (Усталар)", color: "#34d399", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
     { key: "skladchik", label: "Омборчи (Склад)", color: "#fbbf24", bg: "bg-amber-500/10", border: "border-amber-500/30" },
-    { key: "yetkazib_beruvchi", label: "Етказиб берувчи", color: "#f97316", bg: "bg-orange-500/10", border: "border-orange-500/30" },
+    { key: "yetkazib_beruvchi", label: "Таъминотчи", color: "#f97316", bg: "bg-orange-500/10", border: "border-orange-500/30" },
     { key: "mexanik", label: "Механик (Гараж)", color: "#f87171", bg: "bg-red-500/10", border: "border-red-500/30" }
   ];
 
@@ -191,7 +244,7 @@ export default function App() {
     br: { label: "БР Оператори", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: Layers },
     brigadir: { label: "Бригадир", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: User },
     skladchik: { label: "Омборчи", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: Package },
-    yetkazib_beruvchi: { label: "Етказиб берувчи", color: "text-orange-400 bg-orange-400/10 border-orange-400/20", icon: Truck },
+    yetkazib_beruvchi: { label: "Таъминотчи", color: "text-orange-400 bg-orange-400/10 border-orange-400/20", icon: Truck },
     mexanik: { label: "Механик", color: "text-red-400 bg-red-400/10 border-red-400/20", icon: Wrench },
   };
 
@@ -356,65 +409,138 @@ export default function App() {
             </div>
 
             {/* Custom Responsive Stock Bar Chart */}
-            <div className="space-y-5">
-              {data.inventory.map((item, idx) => {
-                let maxCap = 250;
-                if (item.name.includes("Ғишт")) maxCap = 100000;
-                if (item.name.toLowerCase().includes("ёқилғи")) maxCap = 3000;
-                if (item.name.includes("Цемент")) maxCap = 300;
-                
-                const percentage = Math.min(100, (item.quantity / maxCap) * 100);
-                const limitPercentage = (item.minThreshold / maxCap) * 100;
-                
-                return (
-                  <div key={idx} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-sm font-sans font-medium">
-                      <span className="text-slate-100 font-bold text-sm lg:text-base">{item.name}</span>
-                      <div className="flex items-center space-x-3">
-                        <span className="text-slate-300 font-mono text-xs font-bold">
-                          {item.quantity.toLocaleString()} / {maxCap.toLocaleString()} {item.unit}
-                        </span>
-                        <span className={`px-2.5 py-0.5 rounded-md text-xs font-black tracking-wide ${
-                          item.status === "Нормал" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                          item.status === "Кам қолди" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : 
-                          "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse"
-                        }`}>
-                          {item.status.toUpperCase()}
-                        </span>
-                      </div>
-                    </div>
+            <div className="space-y-6">
+              {/* Group 1: Finished Goods */}
+              <div className="space-y-4">
+                <div className="flex items-center space-x-2 border-b border-slate-800/80 pb-2">
+                  <Package className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">
+                    Тайёр маҳсулотлар (1-бўлим)
+                  </span>
+                </div>
+                {data.inventory
+                  .filter(item => item.category === "Тайёр маҳсулот" || item.category === "tayyor")
+                  .map((item, idx) => {
+                    let maxCap = 250;
+                    if (item.name.includes("плиткаси")) maxCap = 1000;
+                    if (item.name.includes("блоки")) maxCap = 200;
+                    if (item.name.includes("бордюри")) maxCap = 150;
                     
-                    {/* Visual Bar Container */}
-                    <div className="h-5 w-full bg-slate-950 rounded-lg overflow-hidden relative border border-slate-800/80 p-0.5">
-                      {/* Live Bar with gradient and soft gloss */}
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${percentage}%` }}
-                        transition={{ duration: 0.8, ease: "easeOut" }}
-                        className={`h-full rounded-md relative ${
-                          item.status === "Нормал" ? "bg-gradient-to-r from-emerald-600 to-emerald-400" :
-                          item.status === "Кам қолди" ? "bg-gradient-to-r from-amber-500 to-amber-300" : 
-                          "bg-gradient-to-r from-red-600 to-red-400"
-                        }`}
-                      >
-                        {/* Gloss shine effect */}
-                        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.15),transparent_60%)]" />
-                      </motion.div>
-                      
-                      {/* Critical stock threshold tick line with glowing badge */}
-                      <div 
-                        className="absolute top-0 bottom-0 w-1 bg-red-400 z-10 shadow-[0_0_8px_rgba(239,68,68,0.5)]" 
-                        style={{ left: `${limitPercentage}%` }}
-                        title={`Минимал хавфсиз захира: ${item.minThreshold}`}
-                      >
-                        <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[9px] text-red-400 font-mono font-bold bg-[#070913] px-1 py-0.2 rounded border border-red-500/20 leading-none">
-                          лимит
-                        </span>
+                    const percentage = Math.min(100, (item.quantity / maxCap) * 100);
+                    const limitPercentage = (item.minThreshold / maxCap) * 100;
+                    
+                    return (
+                      <div key={idx} className="space-y-1.5">
+                        <div className="flex items-center justify-between text-sm font-sans font-medium">
+                          <span className="text-slate-100 font-bold text-sm lg:text-base">{item.name}</span>
+                          <div className="flex items-center space-x-3">
+                            <span className="text-slate-300 font-mono text-xs font-bold">
+                              {item.quantity.toLocaleString()} / {maxCap.toLocaleString()} {item.unit}
+                            </span>
+                            <span className={`px-2.5 py-0.5 rounded-md text-xs font-black tracking-wide ${
+                              item.status === "Нормал" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                              item.status === "Кам қолди" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : 
+                              "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse"
+                            }`}>
+                              {item.status.toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        <div className="h-5 w-full bg-slate-950 rounded-lg overflow-hidden relative border border-slate-800/80 p-0.5">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${percentage}%` }}
+                            transition={{ duration: 0.8, ease: "easeOut" }}
+                            className={`h-full rounded-md relative ${
+                              item.status === "Нормал" ? "bg-gradient-to-r from-emerald-600 to-emerald-400" :
+                              item.status === "Кам қолди" ? "bg-gradient-to-r from-amber-500 to-amber-300" : 
+                              "bg-gradient-to-r from-red-600 to-red-400"
+                            }`}
+                          >
+                            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.15),transparent_60%)]" />
+                          </motion.div>
+                          
+                          <div 
+                            className="absolute top-0 bottom-0 w-1 bg-red-400 z-10 shadow-[0_0_8px_rgba(239,68,68,0.5)]" 
+                            style={{ left: `${limitPercentage}%` }}
+                            title={`Минимал хавфсиз захира: ${item.minThreshold}`}
+                          >
+                            <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[9px] text-red-400 font-mono font-bold bg-[#070913] px-1 py-0.2 rounded border border-red-500/20 leading-none">
+                              лимит
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+              </div>
+
+              {/* Group 2: Components / Materials */}
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center space-x-2 border-b border-slate-800 pb-2">
+                  <Settings className="w-4 h-4 text-indigo-400" />
+                  <span className="text-xs font-mono font-bold text-indigo-400 uppercase tracking-wider">
+                    Бутловчи маҳсулотлар (2-бўлим)
+                  </span>
+                </div>
+                {data.inventory
+                  .filter(item => item.category !== "Тайёр маҳсулот" && item.category !== "tayyor")
+                  .map((item, idx) => {
+                    let maxCap = 250;
+                    if (item.name.includes("Ғишт")) maxCap = 100000;
+                    if (item.name.toLowerCase().includes("ёқилғи")) maxCap = 3000;
+                    if (item.name.includes("Цемент")) maxCap = 300;
+                    
+                    const percentage = Math.min(100, (item.quantity / maxCap) * 100);
+                    const limitPercentage = (item.minThreshold / maxCap) * 100;
+                    
+                    return (
+                      <div key={idx} className="space-y-1.5">
+                        <div className="flex items-center justify-between text-sm font-sans font-medium">
+                          <span className="text-slate-100 font-bold text-sm lg:text-base">{item.name}</span>
+                          <div className="flex items-center space-x-3">
+                            <span className="text-slate-300 font-mono text-xs font-bold">
+                              {item.quantity.toLocaleString()} / {maxCap.toLocaleString()} {item.unit}
+                            </span>
+                            <span className={`px-2.5 py-0.5 rounded-md text-xs font-black tracking-wide ${
+                              item.status === "Нормал" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                              item.status === "Кам қолди" ? "bg-amber-500/10 text-amber-400 border border-emerald-500/20" : 
+                              "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse"
+                            }`}>
+                              {item.status.toUpperCase()}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        <div className="h-5 w-full bg-slate-950 rounded-lg overflow-hidden relative border border-slate-800/80 p-0.5">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${percentage}%` }}
+                            transition={{ duration: 0.8, ease: "easeOut" }}
+                            className={`h-full rounded-md relative ${
+                              item.status === "Нормал" ? "bg-gradient-to-r from-emerald-600 to-emerald-400" :
+                              item.status === "Кам қолди" ? "bg-gradient-to-r from-amber-500 to-amber-300" : 
+                              "bg-gradient-to-r from-red-600 to-red-400"
+                            }`}
+                          >
+                            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.15),transparent_60%)]" />
+                          </motion.div>
+                          
+                          <div 
+                            className="absolute top-0 bottom-0 w-1 bg-red-400 z-10 shadow-[0_0_8px_rgba(239,68,68,0.5)]" 
+                            style={{ left: `${limitPercentage}%` }}
+                            title={`Минимал хавфсиз захира: ${item.minThreshold}`}
+                          >
+                            <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-[9px] text-red-400 font-mono font-bold bg-[#070913] px-1 py-0.2 rounded border border-red-500/20 leading-none">
+                              лимит
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
           </div>
 
@@ -474,7 +600,7 @@ export default function App() {
                        role.key === "br" ? "Оператор" : 
                        role.key === "brigadir" ? "Бригадир" : 
                        role.key === "skladchik" ? "Омбор" : 
-                       role.key === "yetkazib_beruvchi" ? "Ҳайдовчи" : "Механик"}
+                       role.key === "yetkazib_beruvchi" ? "Таъминотчи" : "Механик"}
                     </span>
                   </div>
                 );
@@ -664,7 +790,7 @@ export default function App() {
                      role.key === "br" ? "Оператор" : 
                      role.key === "brigadir" ? "Бригадир" : 
                      role.key === "skladchik" ? "Омбор" : 
-                     role.key === "yetkazib_beruvchi" ? "Ҳайдовчи" : "Механик"}
+                     role.key === "yetkazib_beruvchi" ? "Таъминотчи" : "Механик"}
                   </button>
                 ))}
               </div>
@@ -765,127 +891,464 @@ export default function App() {
           {/* Right Column: Other Operational Tables (Span 7) */}
           <div className="lg:col-span-7 space-y-8">
             
-            {/* Table 1: Logistics & Transportation Delivery */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse" />
-                  <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                    Логистика ва Юк Етказиб Бериш
-                  </h3>
-                </div>
-                <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
-                  РЕАЛ ВАҚТДАГИ МАРШРУТЛАР
-                </span>
-              </div>
+            {/* Navigation Tabs for Right Column */}
+            <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/80 max-w-sm">
+              <button
+                onClick={() => setRightTab("operatsiyalar")}
+                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-150 cursor-pointer text-center ${
+                  rightTab === "operatsiyalar" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Логистика 🚚
+              </button>
+              <button
+                onClick={() => setRightTab("davomat")}
+                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-150 cursor-pointer text-center flex items-center justify-center space-x-1.5 ${
+                  rightTab === "davomat" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <Fingerprint className="w-3.5 h-3.5" />
+                <span>Ходимлар давомати 👆</span>
+              </button>
+            </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
-                      <th className="py-3 px-1">ID</th>
-                      <th className="py-3 px-2">Ҳайдовчи / Техника</th>
-                      <th className="py-3 px-2">Материал / Ҳажм</th>
-                      <th className="py-3 px-2">Етказиш Манзили</th>
-                      <th className="py-3 px-2 text-right">Прогресс</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/40">
-                    {data.transportOrders.map((order, idx) => (
-                      <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
-                        <td className="py-4 px-1 font-mono font-bold text-indigo-400 text-sm">{order.id}</td>
-                        <td className="py-4 px-2">
-                          <p className="font-extrabold text-slate-100 text-sm">{order.driverName}</p>
-                          <p className="text-xs text-slate-400 font-mono font-medium">{order.vehicle}</p>
-                        </td>
-                        <td className="py-4 px-2 font-bold text-slate-200 text-sm">
-                          {order.material} <span className="text-xs text-slate-400 font-mono">({order.quantity})</span>
-                        </td>
-                        <td className="py-4 px-2 text-slate-300 font-medium text-sm">{order.destination}</td>
-                        <td className="py-4 px-2 text-right space-y-1.5">
-                          <div className="flex items-center justify-end space-x-2 font-mono text-xs font-bold text-slate-200">
-                            <span className={`h-2.5 w-2.5 rounded-full ${
-                              order.status === "Етказилди" ? "bg-emerald-400 animate-pulse" :
-                              order.status === "Йўлда" ? "bg-blue-400 animate-pulse" : "bg-amber-400"
-                            }`} />
-                            <span>{order.status}</span>
-                            <span>({order.progress}%)</span>
-                          </div>
-                          
-                          <div className="w-28 h-2 bg-slate-950 rounded-full overflow-hidden inline-block border border-slate-800">
-                            <div 
-                              className={`h-full rounded-full ${
-                                order.status === "Етказилди" ? "bg-emerald-500" :
-                                order.status === "Йўлда" ? "bg-blue-500" : "bg-amber-500"
-                              }`}
-                              style={{ width: `${order.progress}%` }}
+            {rightTab === "operatsiyalar" ? (
+              <>
+                {/* Table 1: Logistics & Transportation Delivery */}
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse" />
+                      <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
+                        Tizimdagi Avtomobillar Ro'yxati va GPS Nazorati
+                      </h3>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
+                      AVTOPARK MONITORI
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
+                          <th className="py-3 px-1">ID</th>
+                          <th className="py-3 px-2">Texnika / Haydovchi</th>
+                          <th className="py-3 px-2">GPS / Tezlik</th>
+                          <th className="py-3 px-2">Marshrut</th>
+                          <th className="py-3 px-2 text-right">Progress</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/40">
+                        {data.transportOrders.map((order, idx) => (
+                          <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
+                            <td className="py-4 px-1 font-mono font-bold text-indigo-400 text-sm">{order.id}</td>
+                            <td className="py-4 px-2">
+                              <p className="font-extrabold text-slate-100 text-sm">{order.vehicle}</p>
+                              <p className="text-xs text-slate-400 font-mono font-medium">{order.driverName}</p>
+                            </td>
+                            <td className="py-4 px-2 space-y-1">
+                              <div className="flex items-center space-x-1.5">
+                                <span className={`h-2 w-2 rounded-full ${
+                                  order.gpsStatus === "Faol" ? "bg-emerald-400 animate-pulse" :
+                                  order.gpsStatus === "Yuklanmoqda" ? "bg-amber-400 animate-pulse" : "bg-slate-500"
+                                }`} />
+                                <span className="text-xs font-mono font-bold text-slate-300">
+                                  {order.gpsStatus === "Faol" ? "Faol" : order.gpsStatus === "Yuklanmoqda" ? "Yuklanmoqda" : "Oflayn"}
+                                </span>
+                              </div>
+                              {order.speed > 0 ? (
+                                <p className="text-[10px] font-mono font-bold text-indigo-400 bg-indigo-500/5 border border-indigo-500/10 px-1.5 py-0.5 rounded inline-block">
+                                  {order.speed} km/s
+                                </p>
+                              ) : (
+                                <p className="text-[10px] text-slate-500 font-mono">To'xtagan</p>
+                              )}
+                            </td>
+                            <td className="py-4 px-2">
+                              <p className="text-sm font-semibold text-slate-200">
+                                Ombor ➔ {getDestKey(order.destination) ? mapPoints[getDestKey(order.destination)!].label : order.destination.split(" ")[0]}
+                              </p>
+                              <p className="text-xs text-slate-400 font-mono truncate max-w-[150px]" title={order.material}>
+                                Yuk: {order.material} ({order.quantity})
+                              </p>
+                            </td>
+                            <td className="py-4 px-2 text-right space-y-1.5">
+                              <div className="flex items-center justify-end space-x-2 font-mono text-xs font-bold text-slate-200">
+                                <span>{order.status}</span>
+                                <span>({order.progress}%)</span>
+                              </div>
+                              
+                              <div className="w-28 h-2 bg-slate-950 rounded-full overflow-hidden inline-block border border-slate-800">
+                                <div 
+                                  className={`h-full rounded-full ${
+                                    order.status === "Етказилди" ? "bg-emerald-500" :
+                                    order.status === "Йўлда" ? "bg-blue-500" : "bg-amber-500"
+                                  }`}
+                                  style={{ width: `${order.progress}%` }}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* GPS Map Component */}
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
+                      </span>
+                      <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
+                        GPS Canli Kuzatuv Xaritasi (Live Map)
+                      </h3>
+                    </div>
+                    <select
+                      value={selectedMap}
+                      onChange={(e) => setSelectedMap(e.target.value as "yangiyol" | "toshkent")}
+                      className="bg-slate-950 text-xs font-mono font-bold text-slate-300 px-3 py-1.5 rounded-md border border-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      <option value="yangiyol">Yangiyo'l Shahri Xaritasi</option>
+                      <option value="toshkent">Toshkent Shahri Xaritasi</option>
+                    </select>
+                  </div>
+
+                  <div className="relative w-full overflow-hidden rounded-xl border border-slate-800 bg-[#060814] h-80">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.03)_0%,transparent_70%)] pointer-events-none" />
+                    <div className="absolute inset-0 bg-[linear-gradient(to_right,#0b0f19_1px,transparent_1px),linear-gradient(to_bottom,#0b0f19_1px,transparent_1px)] bg-[size:2rem_2rem] opacity-30 pointer-events-none" />
+
+                    <svg className="w-full h-full" viewBox="0 0 600 350">
+                      <circle cx="300" cy="170" r="100" fill="none" stroke="#1e1b4b" strokeWidth="1" strokeDasharray="3 6" />
+                      <circle cx="300" cy="170" r="200" fill="none" stroke="#1e1b4b" strokeWidth="1" strokeDasharray="4 8" />
+
+                      {/* Draw Routes */}
+                      {Object.keys(mapPoints).map((key) => {
+                        if (key === "sklad") return null;
+                        const pt = mapPoints[key];
+                        const isRouteActive = data.transportOrders.some(
+                          (o) => o.status === "Йўлда" && getDestKey(o.destination) === key
+                        );
+
+                        return (
+                          <g key={key}>
+                            <line
+                              x1={mapPoints.sklad.x}
+                              y1={mapPoints.sklad.y}
+                              x2={pt.x}
+                              y2={pt.y}
+                              stroke={isRouteActive ? "#4338ca" : "#1e293b"}
+                              strokeWidth={isRouteActive ? "2.5" : "1.5"}
+                              strokeDasharray={isRouteActive ? "none" : "5 5"}
                             />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                            {isRouteActive && (
+                              <line
+                                x1={mapPoints.sklad.x}
+                                y1={mapPoints.sklad.y}
+                                x2={pt.x}
+                                y2={pt.y}
+                                stroke="#6366f1"
+                                strokeWidth="4"
+                                className="opacity-20 animate-pulse"
+                              />
+                            )}
+                          </g>
+                        );
+                      })}
 
-            {/* Table 2: Mechanic and Fleet Repair Logs */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" />
-                  <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                    Махсус Техникалар ва Ёқилғи Тарқатиш
-                  </h3>
+                      {/* Draw Destination Nodes */}
+                      {Object.keys(mapPoints).map((key) => {
+                        const pt = mapPoints[key];
+                        const isSklad = key === "sklad";
+                        const hasActiveVehicle = data.transportOrders.some(
+                          (o) => getDestKey(o.destination) === key && (o.status === "Йўлда" || o.status === "Етказилди")
+                        );
+
+                        return (
+                          <g key={key} className="select-none">
+                            {(isSklad || hasActiveVehicle) && (
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r={isSklad ? "14" : "10"}
+                                className={`${isSklad ? "fill-red-500/10 stroke-red-500/30" : "fill-emerald-500/10 stroke-emerald-500/30"} stroke-2 animate-ping`}
+                              />
+                            )}
+                            <circle
+                              cx={pt.x}
+                              cy={pt.y}
+                              r={isSklad ? "7" : "5"}
+                              className={`${
+                                isSklad ? "fill-red-500 stroke-red-400" :
+                                hasActiveVehicle ? "fill-emerald-500 stroke-emerald-400" : "fill-slate-700 stroke-slate-600"
+                              } stroke-2`}
+                            />
+                            <text
+                              x={pt.x}
+                              y={pt.y - (isSklad ? 12 : 9)}
+                              textAnchor="middle"
+                              fill="#94a3b8"
+                              className="text-[9px] font-mono font-black tracking-tight"
+                            >
+                              {pt.label}
+                            </text>
+                          </g>
+                        );
+                      })}
+
+                      {/* Draw Live Vehicles moving on Paths */}
+                      {data.transportOrders.map((order) => {
+                        const destKey = getDestKey(order.destination);
+                        if (!destKey || !mapPoints[destKey]) return null;
+
+                        const start = mapPoints.sklad;
+                        const end = mapPoints[destKey];
+                        const progress = order.progress / 100;
+
+                        const x = start.x + (end.x - start.x) * progress;
+                        const y = start.y + (end.y - start.y) * progress;
+
+                        if (order.status === "Кутиляпти") return null;
+
+                        const isArrived = order.status === "Етказилди";
+                        const isLoading = order.status === "Юкланмоқда";
+
+                        return (
+                          <g key={order.id} className="cursor-pointer group">
+                            <circle
+                              cx={x}
+                              cy={y}
+                              r="12"
+                              className={`${
+                                isArrived ? "fill-emerald-500/10 stroke-emerald-500/40" :
+                                isLoading ? "fill-amber-500/10 stroke-amber-500/40" : "fill-indigo-500/20 stroke-indigo-400/60"
+                              } stroke-2 animate-pulse`}
+                            />
+                            <circle
+                              cx={x}
+                              cy={y}
+                              r="5.5"
+                              className={`${
+                                isArrived ? "fill-emerald-400 stroke-emerald-500" :
+                                isLoading ? "fill-amber-400 stroke-amber-500" : "fill-indigo-400 stroke-indigo-600"
+                              } stroke-2`}
+                            />
+                            <g className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+                              <rect
+                                x={x - 70}
+                                y={y - 50}
+                                width="140"
+                                height="42"
+                                rx="6"
+                                fill="#070a13"
+                                stroke="#312e81"
+                                strokeWidth="1"
+                                className="shadow-xl"
+                              />
+                              <text x={x} y={y - 38} textAnchor="middle" fill="#ffffff" className="text-[9px] font-black font-sans">
+                                {order.vehicle}
+                              </text>
+                              <text x={x} y={y - 26} textAnchor="middle" fill="#94a3b8" className="text-[8px] font-mono">
+                                {order.driverName}
+                              </text>
+                              <text x={x} y={y - 14} textAnchor="middle" fill="#818cf8" className="text-[8px] font-mono">
+                                {order.speed > 0 ? `${order.speed} km/s | ${order.progress}%` : `${order.status} (${order.progress}%)`}
+                              </text>
+                            </g>
+                            <title>{`${order.vehicle} (${order.driverName})\nHolat: ${order.status}\nTezlik: ${order.speed} km/s\nProgress: ${order.progress}%\nYuk: ${order.material}`}</title>
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
                 </div>
-                <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
-                  ТЕХНИК АУДИТ
-                </span>
-              </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
-                      <th className="py-3 px-1">Код</th>
-                      <th className="py-3 px-2">Транспорт Русуми</th>
-                      <th className="py-3 px-2">Аниқланган Носозликлар</th>
-                      <th className="py-3 px-2 text-center">Ҳолат</th>
-                      <th className="py-3 px-2 text-right">Ёқилғи</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/40">
-                    {data.mechanicStatus.map((rep, idx) => (
-                      <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
-                        <td className="py-4 px-1 font-mono text-slate-300 font-bold text-sm">{rep.id}</td>
-                        <td className="py-4 px-2 font-extrabold text-slate-100 text-sm">{rep.vehicle}</td>
-                        <td className="py-4 px-2 text-slate-300 font-sans text-sm max-w-[200px] truncate" title={rep.issue}>
-                          {rep.issue}
-                        </td>
-                        <td className="py-4 px-2 text-center">
-                          <span className={`px-2.5 py-1 rounded-md text-xs font-black tracking-wider ${
-                            rep.status === "Соз" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                            rep.status === "Таъмирланмоқда" ? "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse" : 
-                            "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                          }`}>
-                            {rep.status.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="py-4 px-2 text-right font-mono font-black text-sm text-slate-100">
-                          {rep.fuelDistributed > 0 ? (
-                            <span className="text-emerald-400 bg-emerald-500/5 px-2 py-1 rounded border border-emerald-500/10">
-                              {rep.fuelDistributed} L
-                            </span>
-                          ) : (
-                            <span className="text-slate-500">0 L</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {/* Table 2: Mechanic and Fleet Repair Logs */}
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" />
+                      <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
+                        Махсус Техникалар ва Ёқилғи Тарқатиш
+                      </h3>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
+                      ТЕХНИК АУДИТ
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
+                          <th className="py-3 px-1">Код</th>
+                          <th className="py-3 px-2">Транспорт Русуми</th>
+                          <th className="py-3 px-2">Аниқланган Носозликлар</th>
+                          <th className="py-3 px-2 text-center">Ҳолат</th>
+                          <th className="py-3 px-2 text-right">Ёқилғи</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/40">
+                        {data.mechanicStatus.map((rep, idx) => (
+                          <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
+                            <td className="py-4 px-1 font-mono text-slate-300 font-bold text-sm">{rep.id}</td>
+                            <td className="py-4 px-2 font-extrabold text-slate-100 text-sm">{rep.vehicle}</td>
+                            <td className="py-4 px-2 text-slate-300 font-sans text-sm max-w-[200px] truncate" title={rep.issue}>
+                              {rep.issue}
+                            </td>
+                            <td className="py-4 px-2 text-center">
+                              <span className={`px-2.5 py-1 rounded-md text-xs font-black tracking-wider ${
+                                rep.status === "Соз" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                                rep.status === "Таъмирланмоқда" ? "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse" : 
+                                "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                              }`}>
+                                {rep.status.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-4 px-2 text-right font-mono font-black text-sm text-slate-100">
+                              {rep.fuelDistributed > 0 ? (
+                                <span className="text-emerald-400 bg-emerald-500/5 px-2 py-1 rounded border border-emerald-500/10">
+                                  {rep.fuelDistributed} L
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">0 L</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-8">
+                {/* Fingerprint device panel */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Card 1: Device status */}
+                  <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
+                    <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                      <Fingerprint className="w-32 h-32 text-indigo-400" />
+                    </div>
+                    <div className="flex items-center space-x-4 mb-4">
+                      <div className="p-3 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
+                        <Fingerprint className="w-6 h-6 animate-pulse" />
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-white text-base">ZKTeco F22 Biometrik terminal</h4>
+                        <p className="text-xs text-slate-400 font-mono">ID: ZK-F22-MAIN | IP: 192.168.1.150:4370</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2 text-sm font-mono font-medium">
+                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
+                        <span className="text-slate-400">Ulanish holati:</span>
+                        <span className="text-emerald-400 font-bold">FAOL (ONLAYN) 🟢</span>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
+                        <span className="text-slate-400">Sinxronizatsiya:</span>
+                        <span className="text-indigo-400">Real-vaqt (Push API)</span>
+                      </div>
+                      <div className="flex justify-between pb-0.5">
+                        <span className="text-slate-400">Barmoq izlari:</span>
+                        <span className="text-slate-200">45 ta ro'yxatda</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Attendance Stats */}
+                  <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
+                    <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                      <User className="w-32 h-32 text-indigo-400" />
+                    </div>
+                    <div className="flex items-center space-x-4 mb-4">
+                      <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400">
+                        <User className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-white text-base">Bugungi Davomat Statistikasi</h4>
+                        <p className="text-xs text-slate-400 font-mono">Kunlik faol xodimlar monitori</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2 text-sm font-mono font-medium">
+                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
+                        <span className="text-slate-400">Faol (Ish joyida):</span>
+                        <span className="text-emerald-400 font-bold">{(data.stats.activeEmployeesCount || 0)} ta xodim</span>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
+                        <span className="text-slate-400">Oxirgi faollik:</span>
+                        <span className="text-slate-200">{(data.attendanceLogs?.[0]?.timeFormatted || "--:--")} ({data.attendanceLogs?.[0]?.employeeName?.split(" ")[0] || "yo'q"})</span>
+                      </div>
+                      <div className="flex justify-between pb-0.5">
+                        <span className="text-slate-400">Bugungi kirishlar:</span>
+                        <span className="text-indigo-400">{(data.attendanceLogs?.filter(a => a.status === "Kirish").length || 0)} ta scan</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table 3: Employee Attendance Log */}
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <Fingerprint className="w-5 h-5 text-indigo-400" />
+                      <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
+                        Biometrik Qurilmadan Kelgan Davomat Jurnali
+                      </h3>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
+                      BUGUNGI SCANLAR
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
+                          <th className="py-3 px-1">Scan ID</th>
+                          <th className="py-3 px-2">Xodim Ismi / Roli</th>
+                          <th className="py-3 px-2">Sana / Vaqt</th>
+                          <th className="py-3 px-2 text-center">Davomat Holati</th>
+                          <th className="py-3 px-2 text-right">Qurilma</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/40">
+                        {data.attendanceLogs && data.attendanceLogs.map((log, idx) => (
+                          <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
+                            <td className="py-4 px-1 font-mono font-bold text-indigo-400 text-sm">{log.id}</td>
+                            <td className="py-4 px-2">
+                              <p className="font-extrabold text-slate-100 text-sm flex items-center space-x-1.5">
+                                <span className="text-indigo-400">👤</span>
+                                <span>{log.employeeName}</span>
+                              </p>
+                              <p className="text-xs text-slate-400 font-mono font-medium">{log.role.toUpperCase()}</p>
+                            </td>
+                            <td className="py-4 px-2 font-bold text-slate-200 text-sm">
+                              {log.timeFormatted} <span className="text-xs text-slate-500 font-mono">({log.timestamp.slice(0, 10)})</span>
+                            </td>
+                            <td className="py-4 px-2 text-center">
+                              <span className={`px-2.5 py-1 rounded-md text-xs font-black tracking-wider ${
+                                log.status === "Kirish" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                                log.status === "Chiqish" ? "bg-orange-500/10 text-orange-400 border border-orange-500/20" : 
+                                "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse"
+                              }`}>
+                                {log.status.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-4 px-2 text-right font-mono font-bold text-sm text-slate-300">
+                              {log.deviceName}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
 
           </div>
 

@@ -7,10 +7,10 @@ Python + aiogram v3 yordamida yozilgan ko'p rollli Telegram bot.
 |---|-----|---------|
 | 1 | Super Admin 👑 | Barcha huquqlar, foydalanuvchilarni tasdiqlash |
 | 2 | Boshqaruvchi 💼 | Zayavkalarni tasdiqlash, sklardan chiqarishga ruxsat berish |
-| 3 | Kuzatuvchi 👁️ | Faqat kuzatish |
+| 3 | Boshqaruvchi 2 💼 | Faqat kuzatish |
 | 4 | Mexanik 🔧 | Zayavka yaratish |
 | 5 | Brigadir BR 🚜 | Zayavka yaratish |
-| 6 | Yetkazib beruvchi 🚚 | Yetkazib berish |
+| 6 | Ta'minotchi 🚚 | Yetkazib berish |
 | 7 | Skladchik 📦 | Ombor boshqarish, qabul qilish |
 
 ## O'rnatish

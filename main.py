@@ -69,8 +69,8 @@ async def main():
     # Botga /start va /menu komandalarini belgilash
     from aiogram.types import BotCommand
     await bot.set_my_commands([
-        BotCommand(command="start", description="Botni ishga tushirish / Menyuni ochish"),
-        BotCommand(command="menu", description="Menyuni yangilash"),
+        BotCommand(command="start", description="Ботни ишга тушириш / Менюни очиш"),
+        BotCommand(command="menu", description="Менюни янгилаш"),
     ])
 
     # Pollingni boshlash

@@ -28,6 +28,8 @@ export interface TransportOrder {
   destination: string;
   status: "Кутиляпти" | "Юкланмоqda" | "Йўлда" | "Етказилди" | "Юкланмоқда";
   progress: number;
+  speed: number;
+  gpsStatus: "Faol" | "Oflayn" | "Yuklanmoqda";
 }
 
 export interface MechanicReport {
@@ -39,11 +41,23 @@ export interface MechanicReport {
   fuelDistributed: number;
 }
 
+export interface AttendanceLog {
+  id: string;
+  employeeName: string;
+  role: string;
+  timestamp: string;
+  timeFormatted: string;
+  status: "Kirish" | "Chiqish" | "Kechikdi";
+  deviceId: string;
+  deviceName: string;
+}
+
 export interface DashboardStats {
   totalLogsCount: number;
   pendingOrdersCount: number;
   activeVehiclesCount: number;
   criticalMaterialsCount: number;
+  activeEmployeesCount: number;
 }
 
 export interface DashboardState {
@@ -51,5 +65,6 @@ export interface DashboardState {
   inventory: InventoryItem[];
   transportOrders: TransportOrder[];
   mechanicStatus: MechanicReport[];
+  attendanceLogs: AttendanceLog[];
   stats: DashboardStats;
 }

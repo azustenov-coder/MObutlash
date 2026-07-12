@@ -82,6 +82,8 @@ async def init_db():
                 await db.execute("ALTER TABLE requests ADD COLUMN quantity_left INTEGER")
             if 'request_type' not in req_cols:
                 await db.execute("ALTER TABLE requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'repair'")
+            if 'price' not in req_cols:
+                await db.execute("ALTER TABLE requests ADD COLUMN price INTEGER DEFAULT 0")
                 
         # Vehicles table
         await db.execute("""
@@ -98,6 +100,21 @@ async def init_db():
                 
         for veh in PREDEFINED_VEHICLES:
             await db.execute("INSERT OR IGNORE INTO vehicles (name, status) VALUES (?, 'soz')", (veh,))
+            
+        # Tranzaksiyalar jadvali (kirim / chiqim tarixi)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS stock_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                user_id INTEGER,
+                request_id INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (telegram_id),
+                FOREIGN KEY (request_id) REFERENCES requests (id)
+            )
+        """)
             
         await db.commit()
 
@@ -263,19 +280,37 @@ async def check_vehicle_active_requests(name: str) -> bool:
             row = await cursor.fetchone()
             return row[0] > 0 if row else False
 
-async def update_request_installation_details(request_id: int, photo_id: str, qty_used: int, qty_left: int):
+async def update_request_installation_details(request_id: int, photo_id: str, items_used_map: dict = None):
+    req = await get_request(request_id)
+    creator_id = req['created_by'] if req else None
+    now = datetime.datetime.now().isoformat()
+    
+    items = await get_request_items(request_id)
+    if items_used_map is None:
+        items_used_map = {str(item['id']): item['quantity_requested'] for item in items}
+        
+    total_qty_used = sum(int(v) for v in items_used_map.values())
+    total_qty_requested = sum(item['quantity_requested'] for item in items)
+    total_qty_left = total_qty_requested - total_qty_used
+    
     async with aiosqlite.connect(DB_PATH) as db:
-        now = datetime.datetime.now().isoformat()
         await db.execute("""
             UPDATE requests 
             SET installed_part_photo = ?, quantity_used = ?, quantity_left = ?, updated_at = ? 
             WHERE id = ?
-        """, (photo_id, qty_used, qty_left, now, request_id))
+        """, (photo_id, total_qty_used, total_qty_left, now, request_id))
         await db.commit()
         
-    items = await get_request_items(request_id)
     for item in items:
-        await add_or_update_inventory_item(item['item_name'], -qty_used)
+        used_qty = int(items_used_map.get(str(item['id']), item['quantity_requested']))
+        if used_qty > 0:
+            await add_or_update_inventory_item(item['item_name'], -used_qty)
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("""
+                    INSERT INTO stock_transactions (item_name, type, quantity, user_id, request_id, created_at)
+                    VALUES (?, 'rasxod', ?, ?, ?, ?)
+                """, (item['item_name'], used_qty, creator_id, request_id, now))
+                await db.commit()
 
 async def update_request_details(request_id: int, description: str, vehicle_name: str, old_part_photo: str, qty_used: int = None, qty_left: int = None, request_type: str = 'repair'):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -376,6 +411,33 @@ async def add_or_update_inventory_item(name: str, quantity_change: int, category
             await db.execute("INSERT INTO inventory (name, quantity, category) VALUES (?, ?, ?)", (name_clean, max(0, quantity_change), category))
         await db.commit()
 
+
+async def update_inventory_manually(name: str, new_qty: int, category: str, user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        name_clean = name.strip()
+        # 1. Oldingi miqdorni aniqlash
+        cursor = await db.execute("SELECT quantity FROM inventory WHERE name = ?", (name_clean,))
+        row = await cursor.fetchone()
+        old_qty = row[0] if row else 0
+        
+        # 2. Yangilash
+        await db.execute("""
+            INSERT INTO inventory (name, quantity, category) VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, category = excluded.category
+        """, (name_clean, new_qty, category))
+        
+        # 3. Tranzaksiyani yozish
+        diff = new_qty - old_qty
+        if diff != 0:
+            tx_type = 'prixod' if diff > 0 else 'rasxod'
+            now = datetime.datetime.now().isoformat()
+            await db.execute("""
+                INSERT INTO stock_transactions (item_name, type, quantity, user_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name_clean, tx_type, abs(diff), user_id, now))
+            
+        await db.commit()
+
 async def add_request_item(request_id: int, item_name: str, quantity_requested: int, quantity_available: int, quantity_missing: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -392,12 +454,54 @@ async def get_request_items(request_id: int):
 
 # Skladchik topshiriqni qabul qilganda ombor zaxirasini yangilash
 async def update_stock_on_receipt(request_id: int):
+    req = await get_request(request_id)
+    wh_id = req['warehouse_released_by'] if req else None
+    now = datetime.datetime.now().isoformat()
+    
     items = await get_request_items(request_id)
     for item in items:
         # Skladchik kuryerdan yetishmagan tovarlarni qabul qildi,
         # shuning uchun zaxiraga yetishmagan (keltirilgan) miqdorni qo'shamiz
         if item['quantity_missing'] > 0:
             await add_or_update_inventory_item(item['item_name'], item['quantity_missing'])
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("""
+                    INSERT INTO stock_transactions (item_name, type, quantity, user_id, request_id, created_at)
+                    VALUES (?, 'prixod', ?, ?, ?, ?)
+                """, (item['item_name'], item['quantity_missing'], wh_id, request_id, now))
+                await db.commit()
+
+def parse_with_regex_excel(text: str) -> list:
+    import re
+    items = []
+    normalized = text.lower()
+    units = ['ta', 'dona', 'shtuk', 'шт', 'шт.', 'd', 'x']
+    
+    # Try pattern 1: (number) (optional ta/dona) (name)
+    pattern1 = r'(\d+)\s*(?:ta|dona|shtuk|шт|шт\.|d|x|\*|-)?\s+([^0-9,;\n]+)'
+    matches = re.findall(pattern1, normalized)
+    
+    if matches:
+        for qty_str, name_str in matches:
+            name = name_str.strip().strip(',.;- \t')
+            if not name or name in units:
+                continue
+            qty = int(qty_str)
+            items.append({'name': name.capitalize(), 'qty': qty})
+            
+    # If no valid items were found with Pattern 1, try Pattern 2
+    if not items:
+        pattern2 = r'([^0-9,;\n]+)\s+(\d+)\s*(?:ta|dona|shtuk|шт|d)?'
+        matches2 = re.findall(pattern2, normalized)
+        if matches2:
+            for name_str, qty_str in matches2:
+                name = name_str.strip().strip(',.;- \t')
+                if not name or name in units:
+                    continue
+                qty = int(qty_str)
+                items.append({'name': name.capitalize(), 'qty': qty})
+                
+    return items
 
 # Excel formatida barcha zayavkalarni eksport qilish - Chiroyli formatlangan
 async def export_requests_to_excel():
@@ -488,7 +592,7 @@ async def export_requests_to_excel():
         ("Yaratilgan Vaqt", 18),
         ("Holati", 22),
         ("Boshqaruvchi", 22),
-        ("Kuryer", 22),
+        ("Ta'minotchi", 22),
         ("Skladchik", 22),
         ("Mahsulot Nomi", 28),
         ("So'ralgan (dona)", 16),
@@ -522,51 +626,104 @@ async def export_requests_to_excel():
         """) as cursor:
             rows = await cursor.fetchall()
 
-    row_vals = [
-        [
-            r['id'],
-            r['creator_name'] or "—",
-            r['description'] or "—",
-            r['created_at'][:16].replace('T', ' ') if r['created_at'] else "—",
-            STATUS_LABELS_UZ.get(r['status'], r['status'] or "—"),
-            r['manager_name'] or "—",
-            r['courier_name'] or "—",
-            r['warehouseman_name'] or "—",
-            r['item_name'] or "—",
-            r['quantity_requested'] or 0,
-            r['quantity_available'] or 0,
-            r['quantity_missing'] or 0,
-            r['quantity_used'] if r['quantity_used'] is not None else "—",
-            r['quantity_left'] if r['quantity_left'] is not None else "—",
-        ]
-        for r in rows
-    ]
+    processed_rows = []
+    for r in rows:
+        item_name = r['item_name'] or ""
+        parsed = parse_with_regex_excel(item_name)
+        if len(parsed) > 1:
+            for item in parsed:
+                v_row = dict(r)
+                v_row['item_name'] = item['name']
+                v_row['quantity_requested'] = item['qty']
+                v_row['quantity_missing'] = item['qty']
+                v_row['quantity_available'] = 0
+                v_row['quantity_used'] = item['qty']
+                v_row['quantity_left'] = 0
+                processed_rows.append(v_row)
+        else:
+            v_row = dict(r)
+            if item_name:
+                v_row['item_name'] = item_name.capitalize()
+            processed_rows.append(v_row)
+
+    # Zayavkalar bo'yicha ketma-ketlikda guruhlash
+    grouped_requests = []
+    current_req_id = None
+    current_group = []
+    
+    for r in processed_rows:
+        req_id = r['id']
+        if req_id != current_req_id:
+            if current_group:
+                grouped_requests.append(current_group)
+            current_group = [r]
+            current_req_id = req_id
+        else:
+            current_group.append(r)
+    if current_group:
+        grouped_requests.append(current_group)
 
     column_widths = [width for _, width in headers_zayavka]
-    for data_row_idx, row_vals_item in enumerate(row_vals, start=3):
-        status_key = rows[data_row_idx - 3]['status']
-        for col_idx, val in enumerate(row_vals_item, start=1):
-            cell = ws1.cell(row=data_row_idx, column=col_idx, value=val)
-            is_num = col_idx in (1, 10, 11, 12, 13, 14)
-            data_cell(cell, val, data_row_idx, status_key, is_num)
-            
-        # Dinamik qator balandligini hisoblash (matn uzunligiga qarab)
-        max_lines = 1
-        for val, width in zip(row_vals_item, column_widths):
-            if val is not None and isinstance(val, str):
-                # Yangi qator belgilarini hisoblash
-                lines = val.count('\n') + 1
-                # Uzun satrlarning qatorga bo'linishini hisoblash
-                for part in val.split('\n'):
-                    part_len = len(part)
-                    effective_width = max(5, width - 2)
-                    if part_len > effective_width:
-                        lines += (part_len - 1) // effective_width
-                max_lines = max(max_lines, lines)
-                
-        ws1.row_dimensions[data_row_idx].height = max(20, max_lines * 15 + 5)
+    current_row = 3
 
-    # Freeze panes: 1-qator va 2-qatorni muzlatish
+    for group in grouped_requests:
+        num_items = len(group)
+        start_row = current_row
+        end_row = current_row + num_items - 1
+        
+        for offset, r in enumerate(group):
+            row_idx = current_row + offset
+            
+            row_vals_item = [
+                r['id'],
+                r['creator_name'] or "—",
+                r['description'] or "—",
+                r['created_at'][:16].replace('T', ' ') if r['created_at'] else "—",
+                STATUS_LABELS_UZ.get(r['status'], r['status'] or "—"),
+                r['manager_name'] or "—",
+                r['courier_name'] or "—",
+                r['warehouseman_name'] or "—",
+                r['item_name'] or "—",
+                r['quantity_requested'] or 0,
+                r['quantity_available'] or 0,
+                r['quantity_missing'] or 0,
+                r['quantity_used'] if r['quantity_used'] is not None else "—",
+                r['quantity_left'] if r['quantity_left'] is not None else "—",
+            ]
+            
+            status_key = r['status']
+            for col_idx, val in enumerate(row_vals_item, start=1):
+                cell = ws1.cell(row=row_idx, column=col_idx, value=val)
+                is_num = col_idx in (1, 10, 11, 12, 13, 14)
+                data_cell(cell, val, row_idx, status_key, is_num)
+                
+            # Dinamik qator balandligini hisoblash
+            max_lines = 1
+            for val, width in zip(row_vals_item, column_widths):
+                if val is not None and isinstance(val, str):
+                    lines = val.count('\n') + 1
+                    for part in val.split('\n'):
+                        part_len = len(part)
+                        effective_width = max(5, width - 2)
+                        if part_len > effective_width:
+                            lines += (part_len - 1) // effective_width
+                    max_lines = max(max_lines, lines)
+            ws1.row_dimensions[row_idx].height = max(20, max_lines * 15 + 5)
+            
+        # Vertikal birlashtirish (T/r, Mexanik, Tavsif, Holat, Boshqaruvchi, Ta'minotchi, Skladchi, Ishlatildi, Qoldi)
+        if num_items > 1:
+            cols_to_merge = [1, 2, 3, 4, 5, 6, 7, 8, 13, 14]
+            for col_idx in cols_to_merge:
+                ws1.merge_cells(start_row=start_row, start_column=col_idx, end_row=end_row, end_column=col_idx)
+                
+                # Birlashgan katak matnlarini vertical center tekislash
+                for r_idx in range(start_row, end_row + 1):
+                    cell = ws1.cell(row=r_idx, column=col_idx)
+                    cell.alignment = Alignment(horizontal='center' if col_idx in (1, 13, 14) else 'left',
+                                               vertical='center', wrap_text=True)
+                    
+        current_row += num_items
+
     ws1.freeze_panes = "A3"
 
     # ============================
@@ -598,7 +755,38 @@ async def export_requests_to_excel():
         async with db.execute("SELECT name, quantity, category FROM inventory ORDER BY name") as cursor:
             inv_items = await cursor.fetchall()
 
-    for inv_idx, item in enumerate(inv_items, start=3):
+    # Pre-process inventory items: split and aggregate duplicates
+    inventory_summary = {}
+    for item in inv_items:
+        name = item['name'] or ""
+        parsed = parse_with_regex_excel(name)
+        category = item['category']
+        if len(parsed) > 1:
+            for parsed_item in parsed:
+                p_name = parsed_item['name']
+                p_qty = parsed_item['qty']
+                if p_name in inventory_summary:
+                    inventory_summary[p_name]['quantity'] += p_qty
+                else:
+                    inventory_summary[p_name] = {'quantity': p_qty, 'category': category}
+        else:
+            p_name = name.capitalize()
+            p_qty = item['quantity']
+            if p_name in inventory_summary:
+                inventory_summary[p_name]['quantity'] += p_qty
+            else:
+                inventory_summary[p_name] = {'quantity': p_qty, 'category': category}
+
+    # Convert to sorted list
+    processed_inv_items = []
+    for p_name, details in sorted(inventory_summary.items()):
+        processed_inv_items.append({
+            'name': p_name,
+            'quantity': details['quantity'],
+            'category': details['category']
+        })
+
+    for inv_idx, item in enumerate(processed_inv_items, start=3):
         qty = item['quantity']
         bg = "C6EFCE" if qty > 0 else "F4CCCC"  # yashil = bor, qizil = yo'q
         category_text = "Tayyor mahsulot" if item['category'] == 'tayyor' else "Butlovchi mahsulot"
@@ -630,10 +818,577 @@ async def export_requests_to_excel():
 
     ws2.freeze_panes = "A3"
 
+    # ============================
+    # 3-VAROQ: KIRIMLAR (PRIXOD)
+    # ============================
+    ws3 = wb.create_sheet(title="📥 Kirimlar (Prixod)")
+    ws3.sheet_view.showGridLines = False
+
+    # Sarlavha
+    ws3.merge_cells('A1:F1')
+    title3 = ws3['A1']
+    title3.value = "OMBORGA KIRIM QILINGAN TOVARLAR (PRIXOD)"
+    title3.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
+    title3.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
+    title3.alignment = Alignment(horizontal='center', vertical='center')
+    ws3.row_dimensions[1].height = 26
+
+    # Ustun sarlavhalari
+    tx_headers = [
+        ("T/r", 6),
+        ("Mahsulot Nomi", 35),
+        ("Miqdori (dona)", 18),
+        ("Mas'ul Xodim", 28),
+        ("Zayavka ID", 15),
+        ("Sana / Vaqt", 22)
+    ]
+    for col_idx, (hdr, width) in enumerate(tx_headers, start=1):
+        cell = ws3.cell(row=2, column=col_idx)
+        header_style(cell, hdr)
+        ws3.column_dimensions[get_column_letter(col_idx)].width = width
+    ws3.row_dimensions[2].height = 34
+
+    # Kirimlar ma'lumotlari
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            WHERE t.type = 'prixod'
+            ORDER BY t.id DESC
+        """) as cursor:
+            prixod_rows = await cursor.fetchall()
+
+    processed_prixod_rows = []
+    for tx in prixod_rows:
+        name = tx['item_name'] or ""
+        parsed = parse_with_regex_excel(name)
+        if len(parsed) > 1:
+            for parsed_item in parsed:
+                v_tx = dict(tx)
+                v_tx['item_name'] = parsed_item['name']
+                v_tx['quantity'] = parsed_item['qty']
+                processed_prixod_rows.append(v_tx)
+        else:
+            v_tx = dict(tx)
+            if name:
+                v_tx['item_name'] = name.capitalize()
+            processed_prixod_rows.append(v_tx)
+
+    for idx, r in enumerate(processed_prixod_rows, start=3):
+        # Greenish bg for prixod rows
+        bg = "E2EFDA"
+        
+        num_cell = ws3.cell(row=idx, column=1, value=idx - 2)
+        num_cell.font = Font(name='Calibri', size=10, bold=True)
+        num_cell.alignment = Alignment(horizontal='center', vertical='center')
+        num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        num_cell.border = thin_border()
+
+        name_cell = ws3.cell(row=idx, column=2, value=r['item_name'])
+        name_cell.font = Font(name='Calibri', size=10)
+        name_cell.alignment = Alignment(horizontal='left', vertical='center')
+        name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        name_cell.border = thin_border()
+
+        qty_cell = ws3.cell(row=idx, column=3, value=r['quantity'])
+        qty_cell.font = Font(name='Calibri', size=10, bold=True)
+        qty_cell.alignment = Alignment(horizontal='center', vertical='center')
+        qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        qty_cell.border = thin_border()
+
+        user_cell = ws3.cell(row=idx, column=4, value=r['user_name'] or "Avtomatik / Tizim")
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+
+        req_cell = ws3.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else "—")
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+
+        date_cell = ws3.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else "—")
+        date_cell.font = Font(name='Calibri', size=10)
+        date_cell.alignment = Alignment(horizontal='center', vertical='center')
+        date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        date_cell.border = thin_border()
+        
+        ws3.row_dimensions[idx].height = 20
+
+    ws3.freeze_panes = "A3"
+
+    # ============================
+    # 4-VAROQ: CHIQIMLAR (RASXOD)
+    # ============================
+    ws4 = wb.create_sheet(title="📤 Chiqimlar (Rasxod)")
+    ws4.sheet_view.showGridLines = False
+
+    # Sarlavha
+    ws4.merge_cells('A1:F1')
+    title4 = ws4['A1']
+    title4.value = "OMBORDAN CHIQARILGAN TOVARLAR (RASXOD)"
+    title4.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
+    title4.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
+    title4.alignment = Alignment(horizontal='center', vertical='center')
+    ws4.row_dimensions[1].height = 26
+
+    for col_idx, (hdr, width) in enumerate(tx_headers, start=1):
+        cell = ws4.cell(row=2, column=col_idx)
+        header_style(cell, hdr)
+        ws4.column_dimensions[get_column_letter(col_idx)].width = width
+    ws4.row_dimensions[2].height = 34
+
+    # Chiqimlar ma'lumotlari
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            WHERE t.type = 'rasxod'
+            ORDER BY t.id DESC
+        """) as cursor:
+            rasxod_rows = await cursor.fetchall()
+
+    processed_rasxod_rows = []
+    for tx in rasxod_rows:
+        name = tx['item_name'] or ""
+        parsed = parse_with_regex_excel(name)
+        if len(parsed) > 1:
+            for parsed_item in parsed:
+                v_tx = dict(tx)
+                v_tx['item_name'] = parsed_item['name']
+                v_tx['quantity'] = parsed_item['qty']
+                processed_rasxod_rows.append(v_tx)
+        else:
+            v_tx = dict(tx)
+            if name:
+                v_tx['item_name'] = name.capitalize()
+            processed_rasxod_rows.append(v_tx)
+
+    for idx, r in enumerate(processed_rasxod_rows, start=3):
+        # Orangish bg for rasxod rows
+        bg = "FCE4D6"
+        
+        num_cell = ws4.cell(row=idx, column=1, value=idx - 2)
+        num_cell.font = Font(name='Calibri', size=10, bold=True)
+        num_cell.alignment = Alignment(horizontal='center', vertical='center')
+        num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        num_cell.border = thin_border()
+
+        name_cell = ws4.cell(row=idx, column=2, value=r['item_name'])
+        name_cell.font = Font(name='Calibri', size=10)
+        name_cell.alignment = Alignment(horizontal='left', vertical='center')
+        name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        name_cell.border = thin_border()
+
+        qty_cell = ws4.cell(row=idx, column=3, value=r['quantity'])
+        qty_cell.font = Font(name='Calibri', size=10, bold=True)
+        qty_cell.alignment = Alignment(horizontal='center', vertical='center')
+        qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        qty_cell.border = thin_border()
+
+        user_cell = ws4.cell(row=idx, column=4, value=r['user_name'] or "Avtomatik / Tizim")
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+
+        req_cell = ws4.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else "—")
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+
+        date_cell = ws4.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else "—")
+        date_cell.font = Font(name='Calibri', size=10)
+        date_cell.alignment = Alignment(horizontal='center', vertical='center')
+        date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        date_cell.border = thin_border()
+        
+        ws4.row_dimensions[idx].height = 20
+
+    ws4.freeze_panes = "A3"
+
     import datetime
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
     file_path = f"MO_Butlash_Hisobot_{timestamp}.xlsx"
     wb.save(file_path)
     return file_path
+
+
+async def export_daily_report_to_excel():
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    import datetime
+
+    wb = openpyxl.Workbook()
+
+    COLOR_HEADER_BG    = "1F4E79"   # To'q ko'k
+    COLOR_HEADER_FONT  = "FFFFFF"   # Oq
+    COLOR_TITLE_BG     = "2E75B6"   # Ko'k
+    COLOR_ALT_ROW      = "DEEAF1"   # Och ko'k
+    COLOR_BORDER       = "ADB9CA"   # Kulrang chegara
+
+    def header_style(cell, text):
+        cell.value = text
+        cell.font = Font(name='Calibri', bold=True, color=COLOR_HEADER_FONT, size=11)
+        cell.fill = PatternFill(fill_type='solid', fgColor=COLOR_HEADER_BG)
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border = thin_border()
+
+    def thin_border():
+        side = Side(style='thin', color=COLOR_BORDER)
+        return Border(left=side, right=side, top=side, bottom=side)
+
+    today_str = datetime.date.today().isoformat()
+
+    # ============================
+    # 1-VAROQ: OMBOR QOLDIQLARI
+    # ============================
+    ws1 = wb.active
+    ws1.title = "📦 Ombor Qoldiqlari"
+    ws1.sheet_view.showGridLines = False
+
+    # Sarlavha
+    ws1.merge_cells('A1:D1')
+    title1 = ws1['A1']
+    title1.value = f"OMBOR QOLDIQLARI MONITORI ({today_str})"
+    title1.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
+    title1.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
+    title1.alignment = Alignment(horizontal='center', vertical='center')
+    ws1.row_dimensions[1].height = 26
+
+    # Ustun sarlavhalari
+    inv_headers = [("T/r", 6), ("Mahsulot Nomi", 35), ("Omborda Bor Miqdor (Dona)", 26), ("Turi", 22)]
+    for col_idx, (hdr, width) in enumerate(inv_headers, start=1):
+        cell = ws1.cell(row=2, column=col_idx)
+        header_style(cell, hdr)
+        ws1.column_dimensions[get_column_letter(col_idx)].width = width
+    ws1.row_dimensions[2].height = 34
+
+    # Inventory ma'lumotlari
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT name, quantity, category FROM inventory ORDER BY name") as cursor:
+            inv_items = await cursor.fetchall()
+
+    # Pre-process inventory items: split and aggregate duplicates
+    inventory_summary = {}
+    for item in inv_items:
+        name = item['name'] or ""
+        parsed = parse_with_regex_excel(name)
+        category = item['category']
+        if len(parsed) > 1:
+            for parsed_item in parsed:
+                p_name = parsed_item['name']
+                p_qty = parsed_item['qty']
+                if p_name in inventory_summary:
+                    inventory_summary[p_name]['quantity'] += p_qty
+                else:
+                    inventory_summary[p_name] = {'quantity': p_qty, 'category': category}
+        else:
+            p_name = name.capitalize()
+            p_qty = item['quantity']
+            if p_name in inventory_summary:
+                inventory_summary[p_name]['quantity'] += p_qty
+            else:
+                inventory_summary[p_name] = {'quantity': p_qty, 'category': category}
+
+    # Convert to sorted list
+    processed_inv_items = []
+    for p_name, details in sorted(inventory_summary.items()):
+        processed_inv_items.append({
+            'name': p_name,
+            'quantity': details['quantity'],
+            'category': details['category']
+        })
+
+    for inv_idx, item in enumerate(processed_inv_items, start=3):
+        qty = item['quantity']
+        bg = "C6EFCE" if qty > 0 else "F4CCCC"  # yashil = bor, qizil = yo'q
+        category_text = "Tayyor mahsulot" if item['category'] == 'tayyor' else "Butlovchi mahsulot"
+
+        num_cell = ws1.cell(row=inv_idx, column=1, value=inv_idx - 2)
+        num_cell.font = Font(name='Calibri', size=10, bold=True)
+        num_cell.alignment = Alignment(horizontal='center', vertical='center')
+        num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        num_cell.border = thin_border()
+
+        name_cell = ws1.cell(row=inv_idx, column=2, value=item['name'])
+        name_cell.font = Font(name='Calibri', size=10)
+        name_cell.alignment = Alignment(horizontal='left', vertical='center')
+        name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        name_cell.border = thin_border()
+
+        qty_cell = ws1.cell(row=inv_idx, column=3, value=qty)
+        qty_cell.font = Font(name='Calibri', size=11, bold=True)
+        qty_cell.alignment = Alignment(horizontal='center', vertical='center')
+        qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        qty_cell.border = thin_border()
+
+        cat_cell = ws1.cell(row=inv_idx, column=4, value=category_text)
+        cat_cell.font = Font(name='Calibri', size=10)
+        cat_cell.alignment = Alignment(horizontal='center', vertical='center')
+        cat_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        cat_cell.border = thin_border()
+        ws1.row_dimensions[inv_idx].height = 20
+
+    ws1.freeze_panes = "A3"
+
+    # ============================
+    # 2-VAROQ: PRIXOD (BUGUNGI)
+    # ============================
+    ws2 = wb.create_sheet(title="📥 Bugungi Kirimlar (Prixod)")
+    ws2.sheet_view.showGridLines = False
+
+    ws2.merge_cells('A1:F1')
+    title2 = ws2['A1']
+    title2.value = f"BUGUNGI KIRIM QILINGAN TOVARLAR ({today_str})"
+    title2.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
+    title2.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
+    title2.alignment = Alignment(horizontal='center', vertical='center')
+    ws2.row_dimensions[1].height = 26
+
+    tx_headers = [
+        ("T/r", 6),
+        ("Mahsulot Nomi", 35),
+        ("Miqdori (dona)", 18),
+        ("Mas'ul Xodim", 28),
+        ("Zayavka ID", 15),
+        ("Sana / Vaqt", 22)
+    ]
+    for col_idx, (hdr, width) in enumerate(tx_headers, start=1):
+        cell = ws2.cell(row=2, column=col_idx)
+        header_style(cell, hdr)
+        ws2.column_dimensions[get_column_letter(col_idx)].width = width
+    ws2.row_dimensions[2].height = 34
+
+    # Prixod ma'lumotlari
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            WHERE t.type = 'prixod' AND t.created_at LIKE ?
+            ORDER BY t.id DESC
+        """, (f"{today_str}%",)) as cursor:
+            prixod_rows = await cursor.fetchall()
+
+    processed_prixod_rows = []
+    for tx in prixod_rows:
+        name = tx['item_name'] or ""
+        parsed = parse_with_regex_excel(name)
+        if len(parsed) > 1:
+            for parsed_item in parsed:
+                v_tx = dict(tx)
+                v_tx['item_name'] = parsed_item['name']
+                v_tx['quantity'] = parsed_item['qty']
+                processed_prixod_rows.append(v_tx)
+        else:
+            v_tx = dict(tx)
+            if name:
+                v_tx['item_name'] = name.capitalize()
+            processed_prixod_rows.append(v_tx)
+
+    for idx, r in enumerate(processed_prixod_rows, start=3):
+        bg = "E2EFDA"
+        
+        num_cell = ws2.cell(row=idx, column=1, value=idx - 2)
+        num_cell.font = Font(name='Calibri', size=10, bold=True)
+        num_cell.alignment = Alignment(horizontal='center', vertical='center')
+        num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        num_cell.border = thin_border()
+
+        name_cell = ws2.cell(row=idx, column=2, value=r['item_name'])
+        name_cell.font = Font(name='Calibri', size=10)
+        name_cell.alignment = Alignment(horizontal='left', vertical='center')
+        name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        name_cell.border = thin_border()
+
+        qty_cell = ws2.cell(row=idx, column=3, value=r['quantity'])
+        qty_cell.font = Font(name='Calibri', size=10, bold=True)
+        qty_cell.alignment = Alignment(horizontal='center', vertical='center')
+        qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        qty_cell.border = thin_border()
+
+        user_cell = ws2.cell(row=idx, column=4, value=r['user_name'] or "Avtomatik / Tizim")
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+
+        req_cell = ws2.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else "—")
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+
+        date_cell = ws2.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else "—")
+        date_cell.font = Font(name='Calibri', size=10)
+        date_cell.alignment = Alignment(horizontal='center', vertical='center')
+        date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        date_cell.border = thin_border()
+        
+        ws2.row_dimensions[idx].height = 20
+
+    ws2.freeze_panes = "A3"
+
+    # ============================
+    # 3-VAROQ: RASXOD (BUGUNGI)
+    # ============================
+    ws3 = wb.create_sheet(title="📤 Bugungi Chiqimlar (Rasxod)")
+    ws3.sheet_view.showGridLines = False
+
+    ws3.merge_cells('A1:F1')
+    title3 = ws3['A1']
+    title3.value = f"BUGUNGI CHIQARILGAN TOVARLAR ({today_str})"
+    title3.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
+    title3.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
+    title3.alignment = Alignment(horizontal='center', vertical='center')
+    ws3.row_dimensions[1].height = 26
+
+    for col_idx, (hdr, width) in enumerate(tx_headers, start=1):
+        cell = ws3.cell(row=2, column=col_idx)
+        header_style(cell, hdr)
+        ws3.column_dimensions[get_column_letter(col_idx)].width = width
+    ws3.row_dimensions[2].height = 34
+
+    # Rasxod ma'lumotlari
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            WHERE t.type = 'rasxod' AND t.created_at LIKE ?
+            ORDER BY t.id DESC
+        """, (f"{today_str}%",)) as cursor:
+            rasxod_rows = await cursor.fetchall()
+
+    processed_rasxod_rows = []
+    for tx in rasxod_rows:
+        name = tx['item_name'] or ""
+        parsed = parse_with_regex_excel(name)
+        if len(parsed) > 1:
+            for parsed_item in parsed:
+                v_tx = dict(tx)
+                v_tx['item_name'] = parsed_item['name']
+                v_tx['quantity'] = parsed_item['qty']
+                processed_rasxod_rows.append(v_tx)
+        else:
+            v_tx = dict(tx)
+            if name:
+                v_tx['item_name'] = name.capitalize()
+            processed_rasxod_rows.append(v_tx)
+
+    for idx, r in enumerate(processed_rasxod_rows, start=3):
+        bg = "FCE4D6"
+        
+        num_cell = ws3.cell(row=idx, column=1, value=idx - 2)
+        num_cell.font = Font(name='Calibri', size=10, bold=True)
+        num_cell.alignment = Alignment(horizontal='center', vertical='center')
+        num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        num_cell.border = thin_border()
+
+        name_cell = ws3.cell(row=idx, column=2, value=r['item_name'])
+        name_cell.font = Font(name='Calibri', size=10)
+        name_cell.alignment = Alignment(horizontal='left', vertical='center')
+        name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        name_cell.border = thin_border()
+
+        qty_cell = ws3.cell(row=idx, column=3, value=r['quantity'])
+        qty_cell.font = Font(name='Calibri', size=10, bold=True)
+        qty_cell.alignment = Alignment(horizontal='center', vertical='center')
+        qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        qty_cell.border = thin_border()
+
+        user_cell = ws3.cell(row=idx, column=4, value=r['user_name'] or "Avtomatik / Tizim")
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+
+        req_cell = ws3.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else "—")
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+
+        date_cell = ws3.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else "—")
+        date_cell.font = Font(name='Calibri', size=10)
+        date_cell.alignment = Alignment(horizontal='center', vertical='center')
+        date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        date_cell.border = thin_border()
+        
+        ws3.row_dimensions[idx].height = 20
+
+    ws3.freeze_panes = "A3"
+
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+    file_path = f"MO_Kunlik_Hisobot_{timestamp}.xlsx"
+    wb.save(file_path)
+    return file_path
+
+
+async def split_request(original_request_id: int, missing_item_ids: list) -> int:
+    """
+    Original zayavkadagi topilmagan mahsulotlarni ajratib,
+    yangi faol (approved) zayavka yaratadi.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # 1. Asl zayavka ma'lumotlarini olish
+        async with db.execute("SELECT * FROM requests WHERE id = ?", (original_request_id,)) as cursor:
+            orig = await cursor.fetchone()
+            if not orig:
+                raise ValueError("Original request not found")
+        
+        # 2. Yangi zayavka yaratish (courier_id va warehouse_released_by NULL bo'ladi)
+        now = datetime.datetime.now().isoformat()
+        cursor = await db.execute("""
+            INSERT INTO requests (
+                created_by, description, status, approved_by, 
+                created_at, updated_at, vehicle_name, old_part_photo, request_type
+            )
+            VALUES (?, ?, 'approved', ?, ?, ?, ?, ?, ?)
+        """, (
+            orig['created_by'], 
+            orig['description'], 
+            orig['approved_by'], 
+            orig['created_at'], 
+            now, 
+            orig['vehicle_name'], 
+            orig['old_part_photo'], 
+            orig['request_type']
+        ))
+        new_request_id = cursor.lastrowid
+        
+        # 3. Tanlangan mahsulotlarni yangi zayavkaga o'tkazish
+        for item_id in missing_item_ids:
+            await db.execute("""
+                UPDATE request_items 
+                SET request_id = ? 
+                WHERE id = ? AND request_id = ?
+            """, (new_request_id, item_id, original_request_id))
+            
+        await db.commit()
+        return new_request_id
+
+async def update_request_price(request_id: int, price: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        now = datetime.datetime.now().isoformat()
+        await db.execute("""
+            UPDATE requests 
+            SET price = ?, updated_at = ?
+            WHERE id = ?
+        """, (price, now, request_id))
+        await db.commit()
+
 
 

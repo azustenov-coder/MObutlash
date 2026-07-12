@@ -9,7 +9,7 @@ from typing import Callable, Awaitable, Any, Dict
 
 import config
 import database as db
-from handlers import common, admin, controller, mechanic, assembler
+from handlers import common, admin, controller, mechanic, assembler, user_management
 
 # Bot loglarini sozlash
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -38,28 +38,29 @@ class AutoRefreshMenuMiddleware(BaseMiddleware):
             user_id = event.from_user.id
         elif isinstance(event, CallbackQuery):
             user_id = event.from_user.id
-
+ 
         if user_id:
             user = await db.get_user(user_id)
             if user and user['is_approved'] == 1:
                 # Foydalanuvchi ma'lumotini `data` ga qo'shamiz (handlerlar ishlatishi uchun)
                 data['db_user'] = user
-
+ 
         return await handler(event, data)
-
-
+ 
+ 
 async def main():
     # Ma'lumotlar bazasini ishga tushirish
     await db.init_db()
-
+ 
     # Dispatcher va xotira omborini sozlash
     dp = Dispatcher(storage=MemoryStorage())
-
+ 
     # Avtomatik yangilanish middleware'ni ro'yxatdan o'tkazish
     dp.message.middleware(AutoRefreshMenuMiddleware())
     dp.callback_query.middleware(AutoRefreshMenuMiddleware())
-
+ 
     # Routerlarni ulash
+    dp.include_router(user_management.router)
     dp.include_router(common.router)
     dp.include_router(admin.router)
     dp.include_router(controller.router)

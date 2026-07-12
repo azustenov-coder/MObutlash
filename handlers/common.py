@@ -62,46 +62,66 @@ def get_role_keyboard():
         row.append(KeyboardButton(text=label))
         if len(row) == 2:
             keyboard.append(row)
-            row = []
     if row:
         keyboard.append(row)
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
 
 def get_main_keyboard(role: str):
+    import sqlite3
+    from config import DB_PATH
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM vehicles WHERE status = 'soz'")
+        soz_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM vehicles WHERE status = 'nosoz'")
+        nosoz_count = cur.fetchone()[0]
+        conn.close()
+    except Exception:
+        soz_count = 0
+        nosoz_count = 0
+        
+    soz_btn_text = f"Соз ҳолат 🟢 ({soz_count})"
+    nosoz_btn_text = f"Носоз ҳолат 🔴 ({nosoz_count})"
+
     keyboard = []
     if role == 'super_admin':
         keyboard = [
             [KeyboardButton(text="Аъзолик сўровлари 👥"), KeyboardButton(text="Ходимлар рўйхати 📋")],
             [KeyboardButton(text="Кутилаётган заявкалар 📥"), KeyboardButton(text="Барча заявкалар 📝")],
             [KeyboardButton(text="Заявкалар ҳаракати 🔄"), KeyboardButton(text="Омбор қолдиқлари 📦")],
-            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊")]
+            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
+            [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
         ]
     elif role == 'manager':
         keyboard = [
             [KeyboardButton(text="Кутилаётган заявкалар 📥")],
             [KeyboardButton(text="Барча заявкалар 📝"), KeyboardButton(text="Ходимлар рўйхати 📋")],
             [KeyboardButton(text="Заявкалар ҳаракати 🔄"), KeyboardButton(text="Омбор қолдиқлари 📦")],
-            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊")]
+            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
+            [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
         ]
     elif role == 'observer':
         keyboard = [
-            [KeyboardButton(text="Барча заявкалар 📝"), KeyboardButton(text="Ходимлар рўйхати 📋")]
+            [KeyboardButton(text="Барча заявкалар 📝"), KeyboardButton(text="Ходимлар рўйхати 📋")],
+            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
+            [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
         ]
     elif role in ['mechanic', 'brigadier']:
         keyboard = [
-            [KeyboardButton(text="Соз автолар 🟢"), KeyboardButton(text="Носоз автолар 🔴")],
+            [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)],
             [KeyboardButton(text="Автолар 🚗"), KeyboardButton(text="Менинг заявкаларим 📂")]
         ]
     elif role == 'warehouseman':
         keyboard = [
             [KeyboardButton(text="Тайёрланиши кутилаётганлар 📦"), KeyboardButton(text="Омбор захирасини бошқариш ⚙️")],
             [KeyboardButton(text="Барча заявкалар 📝"), KeyboardButton(text="Омбор қолдиқлари 📦")],
-            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊")]
+            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")]
         ]
     elif role == 'courier':
         keyboard = [
-            [KeyboardButton(text="Етказилиши кутилаётганлар 🚚")],
-            [KeyboardButton(text="Актив етказувларим 🛣️")]
+            [KeyboardButton(text="Етказилиши кутилаётганлар 🚚"), KeyboardButton(text="Қидирилаётган товарлар 🔎")],
+            [KeyboardButton(text="Актив етказувларим 🛣️"), KeyboardButton(text="Кун якуни 📊")]
         ]
     
     if not keyboard:
@@ -254,7 +274,7 @@ async def process_role(message: Message, state: FSMContext):
 @router.message(F.text.in_(["Excel hisobot yuklab olish 📊", "Excel ҳисобот юклаб олиш 📊"]))
 async def download_excel_report(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] not in ['super_admin', 'manager', 'warehouseman']:
+    if not user or user['role'] not in ['super_admin', 'manager', 'warehouseman', 'observer']:
         await message.answer("Сизда ҳисобот юклаб олиш ҳуқуқи йўқ.")
         return
         
@@ -265,6 +285,26 @@ async def download_excel_report(message: Message):
         await message.answer_document(
             document=FSInputFile(file_path),
             caption="📝 Барча заявкалар ва омбор қолдиқлари ҳисоботи"
+        )
+    except Exception as e:
+        await message.answer(f"Ҳисобот яратишда хатолик юз берди: {e}")
+
+
+# Kunlik Excel hisoboti yuklab olish
+@router.message(F.text.in_(["Kunlik hisobot 📅", "Кунлик ҳисобот 📅"]))
+async def download_daily_excel_report(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or user['role'] not in ['super_admin', 'manager', 'warehouseman', 'observer']:
+        await message.answer("Сизда ҳисобот юклаб олиш ҳуқуқи йўқ.")
+        return
+        
+    await message.answer("Кунлик ҳисобот тайёрланмоқда, илтимос кутинг... ⏳")
+    try:
+        from aiogram.types import FSInputFile
+        file_path = await db.export_daily_report_to_excel()
+        await message.answer_document(
+            document=FSInputFile(file_path),
+            caption="📅 Кунлик омбор қолдиқлари va бугунги ҳаракатлар (кирим/чиқим) ҳисоботи"
         )
     except Exception as e:
         await message.answer(f"Ҳисобот яратишда хатолик юз берди: {e}")
@@ -325,16 +365,21 @@ def get_courier_handover_keyboard(request_id: int):
     ])
 
 # Yetkazib beruvchi harakatlar tugmalari (Qidiryapman, Sotib oldim, Topshirdim)
-def get_courier_action_keyboard(request_id: int):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🔎 Қидиряпман", callback_data=f"cour_search_{request_id}"),
-            InlineKeyboardButton(text="🛒 Сотиб олдим", callback_data=f"cour_buy_{request_id}")
-        ],
-        [
-            InlineKeyboardButton(text="📦 Топширдим", callback_data=f"cour_handover_{request_id}")
-        ]
-    ])
+def get_courier_action_keyboard(request_id: int, request_type: str = 'purchase'):
+    if request_type == 'repair':
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔎 Қидиряпман", callback_data=f"cour_search_{request_id}"),
+                InlineKeyboardButton(text="📦 Топширдим", callback_data=f"cour_handover_{request_id}")
+            ]
+        ])
+    else:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔎 Қидиряпман", callback_data=f"cour_search_{request_id}"),
+                InlineKeyboardButton(text="🛒 Сотиб олдим", callback_data=f"cour_buy_{request_id}")
+            ]
+        ])
 
 # Boshqaruvchi va Admin zayavka boshqarish tugmalari
 def get_request_manage_keyboard(request_id: int):

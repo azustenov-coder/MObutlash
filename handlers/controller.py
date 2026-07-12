@@ -262,13 +262,14 @@ async def show_all_requests(message: Message):
         return
         
     requests = await db.get_all_requests()
-    if not requests:
-        await message.answer("Тизимда ҳеч қандай заявка йўқ.")
+    active_requests = [r for r in requests if r['status'] not in ['completed', 'rejected']]
+    if not active_requests:
+        await message.answer("Тизимда фаол (тугатилмаган) заявкалар топилмади.")
         return
         
-    await message.answer("📝 <b>Заявкалар рўйхати (охирги 10 та):</b>", parse_mode="HTML")
+    await message.answer("📝 <b>Фаол (жараёндаgi) заявкалар рўйхати:</b>", parse_mode="HTML")
     
-    for r in requests[:10]:
+    for r in active_requests:
         status_label = STATUS_LABELS.get(r['status'], r['status'])
         
         # Mahsulotlarni olamiz

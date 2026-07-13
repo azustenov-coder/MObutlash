@@ -237,26 +237,51 @@ async def list_missing_items_for_courier(message: Message):
     async with aiosqlite.connect(db.DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute("""
-            SELECT r.id as request_id, r.vehicle_name, ri.item_name, ri.quantity_missing
+            SELECT r.id as request_id, r.vehicle_name, r.status, ri.item_name, ri.quantity_missing, r.courier_id, r.request_type, r.price
             FROM request_items ri
             JOIN requests r ON ri.request_id = r.id
-            WHERE r.status IN ('approved', 'delivering', 'searching') AND ri.quantity_missing > 0
+            WHERE r.status IN ('approved', 'delivering', 'searching', 'purchased') 
+              AND ri.quantity_missing > 0
+              AND (r.courier_id IS NULL OR r.courier_id = ?)
             ORDER BY r.id ASC
-        """) as cursor:
+        """, (message.from_user.id,)) as cursor:
             rows = await cursor.fetchall()
             
     if not rows:
         await message.answer("Ҳозирда қидирилаётган (етишмаётган) товарлар йўқ.")
         return
         
-    text = "🔎 **Ҳозирда қидирилаётган (сотиб олиниши керак бўлган) товарлар рўйхати:**\n\n"
+    await message.answer("🔎 **Ҳозирда қидирилаётган товарлар рўйхати:**", parse_mode="Markdown")
+    
+    groups = {}
     for r in rows:
-        text += (
-            f"• **{r['item_name']}** — {r['quantity_missing']} та\n"
-            f"  🚗 Машина: {r['vehicle_name']} | 🆔 Заявка №{r['request_id']}\n\n"
-        )
+        req_id = r['request_id']
+        if req_id not in groups:
+            groups[req_id] = {
+                'vehicle': r['vehicle_name'],
+                'status': r['status'],
+                'request_type': r['request_type'],
+                'price': r['price'],
+                'items': []
+            }
+        groups[req_id]['items'].append(f"• **{r['item_name']}** — {r['quantity_missing']} та")
+
+    for req_id, data in groups.items():
+        text = f"🚗 Машина: {data['vehicle']}\n🆔 Заявка №{req_id}\n\nТоварлар:\n"
+        text += "\n".join(data['items'])
         
-    await message.answer(text, parse_mode="Markdown")
+        kb = None
+        if data['status'] == 'purchased':
+            if data['price'] and data['price'] > 0:
+                kb = get_courier_handover_keyboard(req_id)
+            else:
+                kb = get_courier_price_keyboard(req_id)
+        elif data['status'] == 'delivering':
+            kb = get_courier_handover_keyboard(req_id)
+        elif data['status'] in ('approved', 'searching'):
+            kb = get_courier_action_keyboard(req_id, data['request_type'] or 'purchase')
+            
+        await message.answer(text, parse_mode="Markdown", reply_markup=kb)
 
 @router.callback_query(F.data.startswith("cour_take_"))
 async def process_courier_take(callback: CallbackQuery):
@@ -272,6 +297,10 @@ async def process_courier_take(callback: CallbackQuery):
         await callback.message.delete()
         return
         
+    if req['courier_id'] and req['courier_id'] != callback.from_user.id:
+        await callback.answer("Бу заявка аллақачон бошқа таъминотчи томонидан қабул қилинган!", show_alert=True)
+        return
+        
     await db.update_request_status(request_id, 'delivering', callback.from_user.id, 'courier')
     await callback.answer("Буюртма етказишга қабул қилинди.")
     
@@ -283,7 +312,7 @@ async def process_courier_take(callback: CallbackQuery):
         f"Телефон: {user['phone']}\n\n"
         f"Илтимос, ҳаракатни танланг:"
     )
-    request_type = dict(req).get('request_type', 'purchase') if 'req' in locals() else dict(r).get('request_type', 'purchase')
+    request_type = dict(req).get('request_type', 'purchase') if req else 'purchase'
     kb = get_courier_action_keyboard(request_id, request_type)
     
     if callback.message.photo:
@@ -314,6 +343,10 @@ async def process_courier_search(callback: CallbackQuery):
         await callback.message.delete()
         return
 
+    if req['courier_id'] and req['courier_id'] != callback.from_user.id:
+        await callback.answer("Бу заявка аллақачон бошқа таъминотчи томонидан қабул қилинган!", show_alert=True)
+        return
+
     await db.update_request_status(request_id, 'searching', callback.from_user.id, 'courier')
     await callback.answer("Заявка ҳолати 'Қидирилмоқда' га ўзгартирилди.")
 
@@ -325,7 +358,7 @@ async def process_courier_search(callback: CallbackQuery):
         f"Телефон: {user['phone']}\n\n"
         f"Илтимос, ҳаракатни танланг:"
     )
-    request_type = dict(req).get('request_type', 'purchase') if 'req' in locals() else dict(r).get('request_type', 'purchase')
+    request_type = dict(req).get('request_type', 'purchase') if req else 'purchase'
     kb = get_courier_action_keyboard(request_id, request_type)
     
     if callback.message.photo:
@@ -354,6 +387,10 @@ async def process_courier_buy(callback: CallbackQuery):
     if not req:
         await callback.answer("Заявка топилмади.")
         await callback.message.delete()
+        return
+
+    if req['courier_id'] and req['courier_id'] != callback.from_user.id:
+        await callback.answer("Бу заявка аллақачон бошқа таъминотчи томонидан қабул қилинган!", show_alert=True)
         return
 
     await db.update_request_status(request_id, 'purchased', callback.from_user.id, 'courier')
@@ -403,7 +440,11 @@ async def process_courier_price_message(message: Message, state: FSMContext):
         await message.answer("Илтимос, narxni son shaklida yozib yuboring:")
         return
         
-    clean_text = re.sub(r'[\s,\._-]', '', message.text.strip())
+    clean_text = re.sub(r'[^\d]', '', message.text)
+    if not clean_text:
+        await message.answer("Илтимос, фақат рақам киритинг (Масалан: `150000`):")
+        return
+        
     try:
         price = int(clean_text)
         if price < 0:
@@ -453,6 +494,10 @@ async def process_courier_handover(callback: CallbackQuery):
     if not req:
         await callback.answer("Заявка топилмади.")
         await callback.message.delete()
+        return
+        
+    if req['courier_id'] and req['courier_id'] != callback.from_user.id:
+        await callback.answer("Бу заявка аллақачон бошқа таъминотчи томонидан қабул қилинган!", show_alert=True)
         return
         
     await db.update_request_status(request_id, 'waiting_receipt', callback.from_user.id, 'courier')

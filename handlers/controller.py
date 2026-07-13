@@ -69,6 +69,11 @@ async def approve_request(callback: CallbackQuery):
         await callback.message.delete()
         return
         
+    if req['status'] not in ['pending_approval', 'pending_admin_approval']:
+        await callback.answer("Ушбу заявка аллақачон кўриб чиқилган!", show_alert=True)
+        await callback.message.delete()
+        return
+        
     # Statusni 'approved' (Tasdiqlangan) ga o'zgartirish
     role_label = 'super_admin' if user['role'] == 'super_admin' else 'manager'
     await db.update_request_status(request_id, 'approved', callback.from_user.id, role_label)
@@ -79,32 +84,32 @@ async def approve_request(callback: CallbackQuery):
     items_text = ""
     for item in items:
         items_text += (
-            f"   • **{item['item_name']}** — So'ralgan: {item['quantity_requested']} dona | "
-            f"Omborda: {item['quantity_available']} | "
-            f"Yetishmaydi (Olinadi): {item['quantity_missing']}\n"
+            f"   • <b>{item['item_name']}</b> — Сўралган: {item['quantity_requested']} дона | "
+            f"Омборда: {item['quantity_available']} | "
+            f"Етишмайди (Олинади): {item['quantity_missing']}\n"
         )
         
     created_date = req['created_at'][:16].replace('T', ' ')
     role_display = "Супер Админ 👑" if user['role'] == 'super_admin' else "Бошқарувчи 💼"
     summary = (
-        f"✅ **Заявка №{request_id} {role_display} томонидан тасдиқланди ва етказишга юборилди.**\n"
+        f"✅ <b>Заявка №{request_id} {role_display} томонидан тасдиқланди ва етказишга юборилди.</b>\n"
         f"📋 Тавсиф: {req['description']}\n"
-        f"📅 **Сана:** {created_date}\n"
+        f"📅 <b>Сана:</b> {created_date}\n"
         f"👤 Тасдиқлади: {user['full_name']}\n\n"
-        f"🔍 **Маҳсулотлар таркиби:**\n{items_text}"
+        f"🔍 <b>Маҳсулотлар таркиби:</b>\n{items_text}"
     )
     
     if callback.message.photo:
         await callback.message.edit_caption(
             caption=summary,
             reply_markup=None,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     else:
         await callback.message.edit_text(
             summary,
             reply_markup=None,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     
     # Ta'minotchilarni (Kuryer) avtomatik ogohlantirish (bilan birga rasm va inline tugmalar yuboriladi)
@@ -114,11 +119,11 @@ async def approve_request(callback: CallbackQuery):
         try:
             from main import bot
             msg_text = (
-                f"🚚 **Янги буюртма (Заявка №{request_id}) етказиш учун келди!**\n\n"
+                f"🚚 <b>Янги буюртма (Заявка №{request_id}) етказиш учун келди!</b>\n\n"
                 f"Механик/Бригадир: {req['creator_name']}\n"
                 f"📋 Тавсиф: {req['description']}\n"
-                f"📅 **Сана:** {created_date}\n\n"
-                f"🔍 **Олиб келинадиган товарлар (Етишмаётган қолдиқ):**\n{items_text}\n"
+                f"📅 <b>Сана:</b> {created_date}\n\n"
+                f"🔍 <b>Олиб келинадиган товарлар (Етишмаётган қолдиқ):</b>\n{items_text}\n"
                 f"Етказишни қабул қилиш учун пастдаги тугмани босинг."
             )
             kb = get_courier_take_keyboard(request_id)
@@ -128,14 +133,14 @@ async def approve_request(callback: CallbackQuery):
                     photo=req['old_part_photo'],
                     caption=msg_text,
                     reply_markup=kb,
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
             else:
                 await bot.send_message(
                     c['telegram_id'],
                     text=msg_text,
                     reply_markup=kb,
-                    parse_mode="Markdown"
+                    parse_mode="HTML"
                 )
         except Exception as e:
             print(f"Ta'minotchini ogohlantirishda xato: {e}")

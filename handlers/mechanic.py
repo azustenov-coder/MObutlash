@@ -16,6 +16,8 @@ router = Router()
 class RequestCreationStates(StatesGroup):
     waiting_for_vehicle = State()
     waiting_for_photo = State()
+    waiting_for_requester = State()
+    waiting_for_request_type = State()
     waiting_for_items_text = State()
     waiting_for_loop_decision = State()
     waiting_for_manual_item_type = State()
@@ -431,7 +433,8 @@ async def process_veh_newreq(callback: CallbackQuery, state: FSMContext):
 
 @router.message(RequestCreationStates.waiting_for_photo)
 async def process_photo(message: Message, state: FSMContext):
-    if message.text == "Бекор қилиш ❌":
+    text = message.text or message.caption
+    if text == "Бекор қилиш ❌":
         user = await db.get_user(message.from_user.id)
         await state.clear()
         await message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
@@ -440,29 +443,92 @@ async def process_photo(message: Message, state: FSMContext):
     photo_id = None
     if message.photo:
         photo_id = message.photo[-1].file_id
-    elif message.text == "Расм йўқ 🚫":
+    elif text == "Расм йўқ 🚫":
         photo_id = None
     else:
         await message.answer("Илтимос, расм юборинг yoki 'Расм йўқ 🚫' tugmasini bosing:")
         return
 
     await state.update_data(old_part_photo=photo_id)
-    await state.set_state(RequestCreationStates.waiting_for_items_text)
+    await state.set_state(RequestCreationStates.waiting_for_requester)
     
     cancel_kb = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="Бекор қилиш ❌")]
     ], resize_keyboard=True, one_time_keyboard=True)
     
     await message.answer(
-        "📝 **Заявка таркибидаги маҳсулотлар ва таъмирlashlarni yozing:**\n"
-        "Масалан:\n"
-        "- `2 ta balon`\n"
-        "- `4 ta pachivnik`\n"
-        "- `generatorni sozlash`\n\n"
-        "(Hammasini bitta xabarda yozishingiz mumkin, tizim avtomatik ajratadi)",
+        "👤 **Kim so'rayapti?**\n"
+        "Buyurtmachining ismi yoki lavozimini yozing:\n"
+        "(Masalan: `Ivanov Ivan`, `Brigadir`, `Ҳaydovchi`)",
         reply_markup=cancel_kb,
         parse_mode="Markdown"
     )
+
+@router.message(RequestCreationStates.waiting_for_requester)
+async def process_requester(message: Message, state: FSMContext):
+    if message.text == "Бекор қилиш ❌":
+        user = await db.get_user(message.from_user.id)
+        await state.clear()
+        await message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        return
+    
+    if not message.text:
+        await message.answer("Илтимос, исм ёки лавозим ёзинг:")
+        return
+    
+    await state.update_data(requester_name=message.text.strip())
+    await state.set_state(RequestCreationStates.waiting_for_request_type)
+    
+    type_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🛠 Tamirlash", callback_data="reqtype_repair"),
+            InlineKeyboardButton(text="🛒 Yangi zapchast", callback_data="reqtype_purchase")
+        ],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="reqtype_cancel")]
+    ])
+    
+    await message.answer(
+        "📋 **Zayvka turini tanlang:**",
+        reply_markup=type_kb,
+        parse_mode="Markdown"
+    )
+
+@router.callback_query(RequestCreationStates.waiting_for_request_type, F.data.startswith("reqtype_"))
+async def process_request_type(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split("_")[1]
+    
+    if action == "cancel":
+        user = await db.get_user(callback.from_user.id)
+        await state.clear()
+        await callback.message.delete()
+        await callback.message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await callback.answer()
+        return
+    
+    req_type = "repair" if action == "repair" else "purchase"
+    await state.update_data(forced_request_type=req_type)
+    await state.set_state(RequestCreationStates.waiting_for_items_text)
+    
+    cancel_kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="Бекор қилиш ❌")]
+    ], resize_keyboard=True, one_time_keyboard=True)
+    
+    if req_type == "repair":
+        prompt = (
+            "🛠 **Tamirlash zayvkasi**\n\n"
+            "📝 Tamirlash kerak bo'lgan narsalarni yozing:\n"
+            "(Masalan: `generatorni sozlash`, `tormoz yo'gini almashtirish`)"
+        )
+    else:
+        prompt = (
+            "🛒 **Yangi zapchast zayvkasi**\n\n"
+            "📝 Kerakli zapchastlar ro'yxatini yozing:\n"
+            "(Masalan: `2 ta balon`, `4 ta pachivnik`, `1 ta filtr`)"
+        )
+    
+    await callback.answer()
+    await callback.message.edit_text(prompt, parse_mode="Markdown")
+    await callback.message.answer("⬇️ Yozing:", reply_markup=cancel_kb)
 
 @router.message(RequestCreationStates.waiting_for_items_text)
 async def process_items_text(message: Message, state: FSMContext):
@@ -477,6 +543,8 @@ async def process_items_text(message: Message, state: FSMContext):
         return
         
     text = message.text.strip()
+    state_data = await state.get_data()
+    forced_type = state_data.get('forced_request_type', None)
     parsed_items = await parse_request_text(text)
     
     if not parsed_items:
@@ -488,6 +556,9 @@ async def process_items_text(message: Message, state: FSMContext):
         )
         return
         
+    if forced_type:
+        for item in parsed_items:
+            item['type'] = forced_type
     await state.update_data(temp_items=parsed_items)
     await show_loop_decision(message, state)
 
@@ -642,12 +713,12 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
         )
         created_request_ids.append(editing_request_id)
         
-        admin_prefix = f"🔔 **Заявка №{editing_request_id} таҳрирланиб, қайта тасдиқлашга келди!**\n\n"
+        admin_prefix = f"🔔 <b>Заявка №{editing_request_id} таҳрирланиб, қайта тасдиқлашга келди!</b>\n\n"
         summary_text = (
-            f"📝 **Заявка №{editing_request_id} муваффақиятли таҳрирланди ва қайта тасдиқлашга юборилди! 📝**\n\n"
-            f"🚗 **Машина:** {vehicle_name}\n"
-            f"👤 **Юборувчи:** {user['full_name']}\n\n"
-            f"📋 **Заявка таркиби:**\n"
+            f"📝 <b>Заявка №{editing_request_id} муваффақиятли таҳрирланди ва қайта тасдиқлашга юборилди! 📝</b>\n\n"
+            f"🚗 <b>Машина:</b> {vehicle_name}\n"
+            f"👤 <b>Юборувчи:</b> {user['full_name']}\n\n"
+            f"📋 <b>Заявка таркиби:</b>\n"
             f"   1. " + ("🛠 [Таъмирлаш] " if item_type == 'repair' else "🛒 [Сотиб олиш] ") + f"{item['name']} — {item['qty']} та\n"
         )
         
@@ -660,9 +731,9 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
                 kb = get_request_manage_keyboard(editing_request_id)
                 msg_text = admin_prefix + summary_text
                 if photo_id:
-                    await bot.send_photo(admin['telegram_id'], photo=photo_id, caption=msg_text, reply_markup=kb, parse_mode="Markdown")
+                    await bot.send_photo(admin['telegram_id'], photo=photo_id, caption=msg_text, reply_markup=kb, parse_mode="HTML")
                 else:
-                    await bot.send_message(admin['telegram_id'], text=msg_text, reply_markup=kb, parse_mode="Markdown")
+                    await bot.send_message(admin['telegram_id'], text=msg_text, reply_markup=kb, parse_mode="HTML")
             except Exception as e:
                 print(f"Admin {admin['telegram_id']}ni ogohlantirishda xato: {e}")
     else:
@@ -690,12 +761,12 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
             )
             created_request_ids.append(request_id)
             
-            admin_prefix = f"🔔 **Янги заявка тасдиқлаш учун келди! (№{request_id})**\n\n"
+            admin_prefix = f"🔔 <b>Янги заявка тасдиқлаш учун келди! (№{request_id})</b>\n\n"
             summary_text = (
-                f"📝 **Заявка №{request_id} яратилди ва тасдиқлашга юборилди!**\n\n"
-                f"🚗 **Машина:** {vehicle_name}\n"
-                f"👤 **Юборувчи:** {user['full_name']}\n\n"
-                f"📋 **Заявка таркиби:**\n"
+                f"📝 <b>Заявка №{request_id} яратилди ва тасдиқлашга юборилди!</b>\n\n"
+                f"🚗 <b>Машина:</b> {vehicle_name}\n"
+                f"👤 <b>Юборувчи:</b> {user['full_name']}\n\n"
+                f"📋 <b>Заявка таркиби:</b>\n"
                 f"   1. " + ("🛠 [Таъмирлаш] " if item_type == 'repair' else "🛒 [Сотиб олиш] ") + f"{item['name']} — {item['qty']} та\n"
             )
             
@@ -708,9 +779,9 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
                     kb = get_request_manage_keyboard(request_id)
                     msg_text = admin_prefix + summary_text
                     if photo_id:
-                        await bot.send_photo(admin['telegram_id'], photo=photo_id, caption=msg_text, reply_markup=kb, parse_mode="Markdown")
+                        await bot.send_photo(admin['telegram_id'], photo=photo_id, caption=msg_text, reply_markup=kb, parse_mode="HTML")
                     else:
-                        await bot.send_message(admin['telegram_id'], text=msg_text, reply_markup=kb, parse_mode="Markdown")
+                        await bot.send_message(admin['telegram_id'], text=msg_text, reply_markup=kb, parse_mode="HTML")
                 except Exception as e:
                     print(f"Admin {admin['telegram_id']}ni ogohlantirishda xato: {e}")
                     
@@ -719,10 +790,10 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
     await state.clear()
     
     summary_text = (
-        f"🎉 **Заявкалар муваффақиятли яратилди ва тасдиқлашга юборилди!**\n\n"
-        f"🚗 **Машина:** {vehicle_name}\n"
-        f"🔢 **Яратилган заявка ID'лари:** " + ", ".join(f"**№{rid}**" for rid in created_request_ids) + "\n\n"
-        f"📋 **Умумий таркиб:**\n"
+        f"🎉 <b>Заявкалар муваффақиятли яратилди ва тасдиқлашга юборилди!</b>\n\n"
+        f"🚗 <b>Машина:</b> {vehicle_name}\n"
+        f"🔢 <b>Яратилган заявка ID'лари:</b> " + ", ".join(f"<b>№{rid}</b>" for rid in created_request_ids) + "\n\n"
+        f"📋 <b>Умумий таркиб:</b>\n"
     )
     for idx, item in enumerate(temp_items, start=1):
         if item['type'] == 'repair':
@@ -735,13 +806,13 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
             photo=photo_id,
             caption=summary_text,
             reply_markup=get_main_keyboard(user['role']),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     else:
         await callback.message.answer(
             summary_text,
             reply_markup=get_main_keyboard(user['role']),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
 @router.message(F.text.in_(["Mening zayavkalarim 📂", "Менинг заявкаларим 📂"]))

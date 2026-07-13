@@ -1,3 +1,6 @@
 aiogram
 psycopg[binary]
 aiohttp
+python-dotenv
+openpyxl
+aiosqlite

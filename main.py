@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import sys
-
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, BaseMiddleware
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import TelegramObject, ReplyKeyboardRemove
@@ -74,6 +75,23 @@ async def main():
         BotCommand(command="menu", description="Менюни янгилаш"),
     ])
 
+    # Dummy web server function
+    async def handle_ping(request):
+        return web.Response(text="Bot is running!")
+
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    
+    # Start web server
+    await site.start()
+    logging.info(f"Dummy web server started on port {port}")
+
     # Pollingni boshlash
     logging.info("Bot ishga tushmoqda...")
     try:
@@ -83,6 +101,7 @@ async def main():
         logging.error(f"Botni ishga tushirishda xato yuz berdi: {e}")
     finally:
         await bot.session.close()
+        await runner.cleanup()
 
 if __name__ == "__main__":
     if sys.platform == 'win32':

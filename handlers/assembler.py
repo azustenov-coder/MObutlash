@@ -283,7 +283,8 @@ async def process_courier_take(callback: CallbackQuery):
         f"Телефон: {user['phone']}\n\n"
         f"Илтимос, ҳаракатни танланг:"
     )
-    kb = get_courier_action_keyboard(request_id, req.get('request_type', 'purchase'))
+    request_type = dict(req).get('request_type', 'purchase') if 'req' in locals() else dict(r).get('request_type', 'purchase')
+    kb = get_courier_action_keyboard(request_id, request_type)
     
     if callback.message.photo:
         await callback.message.edit_caption(caption=summary, reply_markup=kb, parse_mode="Markdown")
@@ -324,7 +325,8 @@ async def process_courier_search(callback: CallbackQuery):
         f"Телефон: {user['phone']}\n\n"
         f"Илтимос, ҳаракатни танланг:"
     )
-    kb = get_courier_action_keyboard(request_id, req.get('request_type', 'purchase'))
+    request_type = dict(req).get('request_type', 'purchase') if 'req' in locals() else dict(r).get('request_type', 'purchase')
+    kb = get_courier_action_keyboard(request_id, request_type)
     
     if callback.message.photo:
         await callback.message.edit_caption(caption=summary, reply_markup=kb, parse_mode="Markdown")
@@ -616,7 +618,7 @@ async def list_active_courier_deliveries(message: Message):
                 kb = get_courier_price_keyboard(r['id'])
                 formatted_price = " (Нархи киритилмаган)"
         else:
-            kb = get_courier_action_keyboard(r['id'], r.get('request_type', 'purchase'))
+            kb = get_courier_action_keyboard(r['id'], dict(r).get('request_type', 'purchase'))
             formatted_price = ""
             
         text = (

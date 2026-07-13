@@ -1,8 +1,15 @@
+export interface User {
+  id: number;
+  fullName: string;
+  role: string;
+  roleName: string;
+}
+
 export interface BotEvent {
   id: string;
   timestamp: string;
   timeFormatted: string;
-  role: "boshqaruvchi" | "mexanik" | "brigadir" | "br" | "yetkazib_beruvchi" | "skladchik";
+  role: "Super Admin" | "Boshqaruvchi" | "Mexanik" | "Brigadir" | "Ta'minotchi" | "Skladchik";
   username: string;
   fullName: string;
   action: string;
@@ -65,6 +72,7 @@ export interface DashboardState {
   inventory: InventoryItem[];
   transportOrders: TransportOrder[];
   mechanicStatus: MechanicReport[];
+  users: User[];
   attendanceLogs: AttendanceLog[];
   stats: DashboardStats;
 }

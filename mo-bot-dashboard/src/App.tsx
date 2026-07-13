@@ -24,60 +24,25 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { DashboardState, BotEvent } from "./types";
+import { StatCards } from "./components/dashboard/StatCards";
+import { MapWidget } from "./components/dashboard/MapWidget";
+import { OperationsTable } from "./components/dashboard/OperationsTable";
+import { yangiyolPoints, toshkentPoints, getDestKey } from "./utils/mapUtils";
 
 export default function App() {
   const [data, setData] = useState<DashboardState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"barchasi" | "boshqaruvchi" | "mexanik" | "brigadir" | "br" | "yetkazib_beruvchi" | "skladchik">("barchasi");
-  const [rightTab, setRightTab] = useState<"operatsiyalar" | "davomat">("operatsiyalar");
+  const [rightTab, setRightTab] = useState<"operatsiyalar" | "xodimlar">("operatsiyalar");
   const [searchQuery, setSearchQuery] = useState("");
   const [newEventId, setNewEventId] = useState<string | null>(null);
   const [triggeringSim, setTriggeringSim] = useState(false);
 
   const [selectedMap, setSelectedMap] = useState<"yangiyol" | "toshkent">("yangiyol");
 
-  // GPS Map Coordinates mapping
-  const yangiyolPoints: Record<string, { x: number; y: number; label: string }> = {
-    sklad: { x: 300, y: 170, label: "Ombor (Sklad-1)" },
-    tinchlik: { x: 180, y: 290, label: "Tinchlik MFY" },
-    navruz: { x: 80, y: 210, label: "Navro'z MFY" },
-    gulbahor: { x: 480, y: 60, label: "Gulbahor Qo'rg'oni" },
-    niyozbosh: { x: 200, y: 90, label: "Niyozbosh" },
-    binokor: { x: 280, y: 40, label: "Binokor MFY" },
-    vokzal: { x: 350, y: 130, label: "Yangiyo'l Vokzal" }
-  };
-
-  const toshkentPoints: Record<string, { x: number; y: number; label: string }> = {
-    sklad: { x: 300, y: 170, label: "Ombor (Sklad-1)" },
-    sergeli: { x: 180, y: 290, label: "Sergeli-5" },
-    chilonzor: { x: 80, y: 210, label: "Chilonzor 9" },
-    yunusobod: { x: 480, y: 60, label: "Yunusobod 12" },
-    olmazor: { x: 200, y: 90, label: "Olmazor Res." },
-    qoraqamish: { x: 280, y: 40, label: "Qoraqamish-3" },
-    city: { x: 350, y: 130, label: "Tashkent City" }
-  };
-
+  // Map points resolution
   const mapPoints = selectedMap === "yangiyol" ? yangiyolPoints : toshkentPoints;
-
-  const getDestKey = (dest: string) => {
-    const d = dest.toLowerCase();
-    // Yangiyol keys
-    if (d.includes("tinchlik")) return "tinchlik";
-    if (d.includes("navr") || d.includes("навр")) return "navruz";
-    if (d.includes("gulbahor") || d.includes("гулбаҳор")) return "gulbahor";
-    if (d.includes("niyozbosh") || d.includes("ниёзбош")) return "niyozbosh";
-    if (d.includes("binokor") || d.includes("бинокор")) return "binokor";
-    if (d.includes("vokzal") || d.includes("вокзал")) return "vokzal";
-    // Tashkent keys
-    if (d.includes("sergeli") || d.includes("сергели")) return "sergeli";
-    if (d.includes("chilonzor") || d.includes("чилонзор")) return "chilonzor";
-    if (d.includes("yunusobod") || d.includes("юнусобод")) return "yunusobod";
-    if (d.includes("olmazor") || d.includes("олмазор")) return "olmazor";
-    if (d.includes("qoraqamish") || d.includes("қорақамиш")) return "qoraqamish";
-    if (d.includes("city") || d.includes("сити")) return "city";
-    return null;
-  };
   
   // Gemini AI state
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
@@ -229,23 +194,25 @@ export default function App() {
   }, {} as Record<string, number>);
 
   const rolesList = [
-    { key: "boshqaruvchi", label: "Бошқарувчи (Менеджер)", color: "#a78bfa", bg: "bg-violet-500/10", border: "border-violet-500/30" },
-    { key: "br", label: "БР Оператори", color: "#60a5fa", bg: "bg-blue-500/10", border: "border-blue-500/30" },
-    { key: "brigadir", label: "Бригадир (Усталар)", color: "#34d399", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
-    { key: "skladchik", label: "Омборчи (Склад)", color: "#fbbf24", bg: "bg-amber-500/10", border: "border-amber-500/30" },
-    { key: "yetkazib_beruvchi", label: "Таъминотчи", color: "#f97316", bg: "bg-orange-500/10", border: "border-orange-500/30" },
-    { key: "mexanik", label: "Механик (Гараж)", color: "#f87171", bg: "bg-red-500/10", border: "border-red-500/30" }
+    { key: "Super Admin", label: "Админ", color: "#60a5fa", bg: "bg-blue-500/10", border: "border-blue-500/30" },
+    { key: "Boshqaruvchi", label: "Оператор", color: "#a78bfa", bg: "bg-violet-500/10", border: "border-violet-500/30" },
+    { key: "Boshqaruvchi 2", label: "Оператор 2", color: "#8b5cf6", bg: "bg-violet-600/10", border: "border-violet-600/30" },
+    { key: "Brigadir", label: "Бригадир", color: "#34d399", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
+    { key: "Skladchik", label: "Омбор", color: "#fbbf24", bg: "bg-amber-500/10", border: "border-amber-500/30" },
+    { key: "Ta'minotchi", label: "Таъминотчи", color: "#f97316", bg: "bg-orange-500/10", border: "border-orange-500/30" },
+    { key: "Mexanik", label: "Механик", color: "#f87171", bg: "bg-red-500/10", border: "border-red-500/30" }
   ];
 
   const maxRoleActivity = Math.max(...rolesList.map(r => roleCounts[r.key] || 0), 1);
 
-  const roleMeta = {
-    boshqaruvchi: { label: "Бошқарувчи", color: "text-violet-400 bg-violet-400/10 border-violet-400/20", icon: Shield },
-    br: { label: "БР Оператори", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: Layers },
-    brigadir: { label: "Бригадир", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: User },
-    skladchik: { label: "Омборчи", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: Package },
-    yetkazib_beruvchi: { label: "Таъминотчи", color: "text-orange-400 bg-orange-400/10 border-orange-400/20", icon: Truck },
-    mexanik: { label: "Механик", color: "text-red-400 bg-red-400/10 border-red-400/20", icon: Wrench },
+  const roleMeta: Record<string, any> = {
+    "Super Admin": { label: "Админ", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: Layers },
+    "Boshqaruvchi": { label: "Оператор", color: "text-violet-400 bg-violet-400/10 border-violet-400/20", icon: Shield },
+    "Boshqaruvchi 2": { label: "Оператор 2", color: "text-violet-500 bg-violet-500/10 border-violet-500/20", icon: Shield },
+    "Brigadir": { label: "Бригадир", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: User },
+    "Skladchik": { label: "Омбор", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: Package },
+    "Ta'minotchi": { label: "Таъминотчи", color: "text-orange-400 bg-orange-400/10 border-orange-400/20", icon: Truck },
+    "Mexanik": { label: "Механик", color: "text-red-400 bg-red-400/10 border-red-400/20", icon: Wrench },
   };
 
   return (
@@ -318,73 +285,7 @@ export default function App() {
       <main id="dashboard_content_stage" className="max-w-7xl mx-auto px-4 py-6 lg:px-8 space-y-8">
         
         {/* 2. KPI metrics grid with larger and highly legible typography */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          
-          <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 hover:border-indigo-500/40 rounded-2xl p-6 flex items-start space-x-5 transition duration-200 shadow-xl relative overflow-hidden group">
-            <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
-              <Bot className="w-32 h-32 text-indigo-400" />
-            </div>
-            <div className="p-3.5 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400 shadow-inner shrink-0">
-              <Bot className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Жами Бот Амаллари</p>
-              <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.totalLogsCount}</h3>
-              <p className="text-xs text-emerald-400 font-bold mt-1.5 flex items-center">
-                <TrendingUp className="w-4 h-4 mr-1 shrink-0" /> +28% Фаоллик (Бугун)
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 hover:border-blue-500/40 rounded-2xl p-6 flex items-start space-x-5 transition duration-200 shadow-xl relative overflow-hidden group">
-            <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
-              <Truck className="w-32 h-32 text-blue-400" />
-            </div>
-            <div className="p-3.5 bg-blue-500/10 rounded-xl border border-blue-500/20 text-blue-400 shadow-inner shrink-0">
-              <Truck className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Йўлдаги Юклар</p>
-              <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.pendingOrdersCount}</h3>
-              <p className="text-xs text-blue-300 font-bold mt-1.5 flex items-center">
-                <Radio className="w-4 h-4 mr-1 animate-pulse text-blue-400 shrink-0" /> Маршрутлар Назоратда
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 hover:border-emerald-500/40 rounded-2xl p-6 flex items-start space-x-5 transition duration-200 shadow-xl relative overflow-hidden group">
-            <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
-              <Wrench className="w-32 h-32 text-emerald-400" />
-            </div>
-            <div className="p-3.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400 shadow-inner shrink-0">
-              <Wrench className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Соз Техникалар</p>
-              <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.activeVehiclesCount}</h3>
-              <p className="text-xs text-emerald-400 font-bold mt-1.5 flex items-center">
-                <CheckCircle2 className="w-4 h-4 mr-1 shrink-0" /> 82% Техник Тайёрлик
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 hover:border-amber-500/40 rounded-2xl p-6 flex items-start space-x-5 transition duration-200 shadow-xl relative overflow-hidden group">
-            <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
-              <AlertTriangle className="w-32 h-32 text-amber-400" />
-            </div>
-            <div className="p-3.5 bg-amber-500/10 rounded-xl border border-amber-500/20 text-amber-400 shadow-inner shrink-0">
-              <AlertTriangle className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Критик Материаллар</p>
-              <h3 className="text-3xl font-black text-white mt-1 font-mono">{data.stats.criticalMaterialsCount}</h3>
-              <p className="text-xs text-amber-400 font-bold mt-1.5 flex items-center">
-                <AlertCircle className="w-4 h-4 mr-1 shrink-0 text-amber-400 animate-pulse" /> Захирани Тўлдириш Шарт
-              </p>
-            </div>
-          </div>
-
-        </section>
+        <StatCards stats={data.stats} />
 
         {/* 3. Central Analysis Diagrams Row - High Craft Custom Visualizations with Bold fonts */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -596,11 +497,7 @@ export default function App() {
 
                     {/* Label */}
                     <span className="text-xs font-mono text-slate-300 font-bold text-center uppercase tracking-tight block truncate w-16" title={role.label}>
-                      {role.key === "boshqaruvchi" ? "Админ" : 
-                       role.key === "br" ? "Оператор" : 
-                       role.key === "brigadir" ? "Бригадир" : 
-                       role.key === "skladchik" ? "Омбор" : 
-                       role.key === "yetkazib_beruvchi" ? "Таъминотчи" : "Механик"}
+                      {role.label}
                     </span>
                   </div>
                 );
@@ -786,11 +683,7 @@ export default function App() {
                         : "bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800"
                     }`}
                   >
-                    {role.key === "boshqaruvchi" ? "Админ" : 
-                     role.key === "br" ? "Оператор" : 
-                     role.key === "brigadir" ? "Бригадир" : 
-                     role.key === "skladchik" ? "Омбор" : 
-                     role.key === "yetkazib_beruvchi" ? "Таъминотчи" : "Механик"}
+                    {role.label}
                   </button>
                 ))}
               </div>
@@ -817,7 +710,7 @@ export default function App() {
                   </div>
                 ) : (
                   filteredLogs.map((log) => {
-                    const Meta = roleMeta[log.role] || roleMeta.brigadir;
+                    const Meta = roleMeta[log.role] || roleMeta["Brigadir"];
                     const RoleIcon = Meta.icon;
                     const isNew = newEventId === log.id;
                     
@@ -902,270 +795,28 @@ export default function App() {
                 Логистика 🚚
               </button>
               <button
-                onClick={() => setRightTab("davomat")}
+                onClick={() => setRightTab("xodimlar")}
                 className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-150 cursor-pointer text-center flex items-center justify-center space-x-1.5 ${
-                  rightTab === "davomat" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" : "text-slate-400 hover:text-slate-200"
+                  rightTab === "xodimlar" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                <Fingerprint className="w-3.5 h-3.5" />
-                <span>Ходимлар давомати 👆</span>
+                <User className="w-3.5 h-3.5" />
+                <span>Ходимлар рўйхати 👥</span>
               </button>
             </div>
 
             {rightTab === "operatsiyalar" ? (
               <>
                 {/* Table 1: Logistics & Transportation Delivery */}
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse" />
-                      <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                        Tizimdagi Avtomobillar Ro'yxati va GPS Nazorati
-                      </h3>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
-                      AVTOPARK MONITORI
-                    </span>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
-                          <th className="py-3 px-1">ID</th>
-                          <th className="py-3 px-2">Texnika / Haydovchi</th>
-                          <th className="py-3 px-2">GPS / Tezlik</th>
-                          <th className="py-3 px-2">Marshrut</th>
-                          <th className="py-3 px-2 text-right">Progress</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/40">
-                        {data.transportOrders.map((order, idx) => (
-                          <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
-                            <td className="py-4 px-1 font-mono font-bold text-indigo-400 text-sm">{order.id}</td>
-                            <td className="py-4 px-2">
-                              <p className="font-extrabold text-slate-100 text-sm">{order.vehicle}</p>
-                              <p className="text-xs text-slate-400 font-mono font-medium">{order.driverName}</p>
-                            </td>
-                            <td className="py-4 px-2 space-y-1">
-                              <div className="flex items-center space-x-1.5">
-                                <span className={`h-2 w-2 rounded-full ${
-                                  order.gpsStatus === "Faol" ? "bg-emerald-400 animate-pulse" :
-                                  order.gpsStatus === "Yuklanmoqda" ? "bg-amber-400 animate-pulse" : "bg-slate-500"
-                                }`} />
-                                <span className="text-xs font-mono font-bold text-slate-300">
-                                  {order.gpsStatus === "Faol" ? "Faol" : order.gpsStatus === "Yuklanmoqda" ? "Yuklanmoqda" : "Oflayn"}
-                                </span>
-                              </div>
-                              {order.speed > 0 ? (
-                                <p className="text-[10px] font-mono font-bold text-indigo-400 bg-indigo-500/5 border border-indigo-500/10 px-1.5 py-0.5 rounded inline-block">
-                                  {order.speed} km/s
-                                </p>
-                              ) : (
-                                <p className="text-[10px] text-slate-500 font-mono">To'xtagan</p>
-                              )}
-                            </td>
-                            <td className="py-4 px-2">
-                              <p className="text-sm font-semibold text-slate-200">
-                                Ombor ➔ {getDestKey(order.destination) ? mapPoints[getDestKey(order.destination)!].label : order.destination.split(" ")[0]}
-                              </p>
-                              <p className="text-xs text-slate-400 font-mono truncate max-w-[150px]" title={order.material}>
-                                Yuk: {order.material} ({order.quantity})
-                              </p>
-                            </td>
-                            <td className="py-4 px-2 text-right space-y-1.5">
-                              <div className="flex items-center justify-end space-x-2 font-mono text-xs font-bold text-slate-200">
-                                <span>{order.status}</span>
-                                <span>({order.progress}%)</span>
-                              </div>
-                              
-                              <div className="w-28 h-2 bg-slate-950 rounded-full overflow-hidden inline-block border border-slate-800">
-                                <div 
-                                  className={`h-full rounded-full ${
-                                    order.status === "Етказилди" ? "bg-emerald-500" :
-                                    order.status === "Йўлда" ? "bg-blue-500" : "bg-amber-500"
-                                  }`}
-                                  style={{ width: `${order.progress}%` }}
-                                />
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <OperationsTable transportOrders={data.transportOrders} mapPoints={mapPoints} />
 
                 {/* GPS Map Component */}
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <span className="relative flex h-3 w-3">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
-                      </span>
-                      <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                        GPS Canli Kuzatuv Xaritasi (Live Map)
-                      </h3>
-                    </div>
-                    <select
-                      value={selectedMap}
-                      onChange={(e) => setSelectedMap(e.target.value as "yangiyol" | "toshkent")}
-                      className="bg-slate-950 text-xs font-mono font-bold text-slate-300 px-3 py-1.5 rounded-md border border-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
-                    >
-                      <option value="yangiyol">Yangiyo'l Shahri Xaritasi</option>
-                      <option value="toshkent">Toshkent Shahri Xaritasi</option>
-                    </select>
-                  </div>
-
-                  <div className="relative w-full overflow-hidden rounded-xl border border-slate-800 bg-[#060814] h-80">
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.03)_0%,transparent_70%)] pointer-events-none" />
-                    <div className="absolute inset-0 bg-[linear-gradient(to_right,#0b0f19_1px,transparent_1px),linear-gradient(to_bottom,#0b0f19_1px,transparent_1px)] bg-[size:2rem_2rem] opacity-30 pointer-events-none" />
-
-                    <svg className="w-full h-full" viewBox="0 0 600 350">
-                      <circle cx="300" cy="170" r="100" fill="none" stroke="#1e1b4b" strokeWidth="1" strokeDasharray="3 6" />
-                      <circle cx="300" cy="170" r="200" fill="none" stroke="#1e1b4b" strokeWidth="1" strokeDasharray="4 8" />
-
-                      {/* Draw Routes */}
-                      {Object.keys(mapPoints).map((key) => {
-                        if (key === "sklad") return null;
-                        const pt = mapPoints[key];
-                        const isRouteActive = data.transportOrders.some(
-                          (o) => o.status === "Йўлда" && getDestKey(o.destination) === key
-                        );
-
-                        return (
-                          <g key={key}>
-                            <line
-                              x1={mapPoints.sklad.x}
-                              y1={mapPoints.sklad.y}
-                              x2={pt.x}
-                              y2={pt.y}
-                              stroke={isRouteActive ? "#4338ca" : "#1e293b"}
-                              strokeWidth={isRouteActive ? "2.5" : "1.5"}
-                              strokeDasharray={isRouteActive ? "none" : "5 5"}
-                            />
-                            {isRouteActive && (
-                              <line
-                                x1={mapPoints.sklad.x}
-                                y1={mapPoints.sklad.y}
-                                x2={pt.x}
-                                y2={pt.y}
-                                stroke="#6366f1"
-                                strokeWidth="4"
-                                className="opacity-20 animate-pulse"
-                              />
-                            )}
-                          </g>
-                        );
-                      })}
-
-                      {/* Draw Destination Nodes */}
-                      {Object.keys(mapPoints).map((key) => {
-                        const pt = mapPoints[key];
-                        const isSklad = key === "sklad";
-                        const hasActiveVehicle = data.transportOrders.some(
-                          (o) => getDestKey(o.destination) === key && (o.status === "Йўлда" || o.status === "Етказилди")
-                        );
-
-                        return (
-                          <g key={key} className="select-none">
-                            {(isSklad || hasActiveVehicle) && (
-                              <circle
-                                cx={pt.x}
-                                cy={pt.y}
-                                r={isSklad ? "14" : "10"}
-                                className={`${isSklad ? "fill-red-500/10 stroke-red-500/30" : "fill-emerald-500/10 stroke-emerald-500/30"} stroke-2 animate-ping`}
-                              />
-                            )}
-                            <circle
-                              cx={pt.x}
-                              cy={pt.y}
-                              r={isSklad ? "7" : "5"}
-                              className={`${
-                                isSklad ? "fill-red-500 stroke-red-400" :
-                                hasActiveVehicle ? "fill-emerald-500 stroke-emerald-400" : "fill-slate-700 stroke-slate-600"
-                              } stroke-2`}
-                            />
-                            <text
-                              x={pt.x}
-                              y={pt.y - (isSklad ? 12 : 9)}
-                              textAnchor="middle"
-                              fill="#94a3b8"
-                              className="text-[9px] font-mono font-black tracking-tight"
-                            >
-                              {pt.label}
-                            </text>
-                          </g>
-                        );
-                      })}
-
-                      {/* Draw Live Vehicles moving on Paths */}
-                      {data.transportOrders.map((order) => {
-                        const destKey = getDestKey(order.destination);
-                        if (!destKey || !mapPoints[destKey]) return null;
-
-                        const start = mapPoints.sklad;
-                        const end = mapPoints[destKey];
-                        const progress = order.progress / 100;
-
-                        const x = start.x + (end.x - start.x) * progress;
-                        const y = start.y + (end.y - start.y) * progress;
-
-                        if (order.status === "Кутиляпти") return null;
-
-                        const isArrived = order.status === "Етказилди";
-                        const isLoading = order.status === "Юкланмоқда";
-
-                        return (
-                          <g key={order.id} className="cursor-pointer group">
-                            <circle
-                              cx={x}
-                              cy={y}
-                              r="12"
-                              className={`${
-                                isArrived ? "fill-emerald-500/10 stroke-emerald-500/40" :
-                                isLoading ? "fill-amber-500/10 stroke-amber-500/40" : "fill-indigo-500/20 stroke-indigo-400/60"
-                              } stroke-2 animate-pulse`}
-                            />
-                            <circle
-                              cx={x}
-                              cy={y}
-                              r="5.5"
-                              className={`${
-                                isArrived ? "fill-emerald-400 stroke-emerald-500" :
-                                isLoading ? "fill-amber-400 stroke-amber-500" : "fill-indigo-400 stroke-indigo-600"
-                              } stroke-2`}
-                            />
-                            <g className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
-                              <rect
-                                x={x - 70}
-                                y={y - 50}
-                                width="140"
-                                height="42"
-                                rx="6"
-                                fill="#070a13"
-                                stroke="#312e81"
-                                strokeWidth="1"
-                                className="shadow-xl"
-                              />
-                              <text x={x} y={y - 38} textAnchor="middle" fill="#ffffff" className="text-[9px] font-black font-sans">
-                                {order.vehicle}
-                              </text>
-                              <text x={x} y={y - 26} textAnchor="middle" fill="#94a3b8" className="text-[8px] font-mono">
-                                {order.driverName}
-                              </text>
-                              <text x={x} y={y - 14} textAnchor="middle" fill="#818cf8" className="text-[8px] font-mono">
-                                {order.speed > 0 ? `${order.speed} km/s | ${order.progress}%` : `${order.status} (${order.progress}%)`}
-                              </text>
-                            </g>
-                            <title>{`${order.vehicle} (${order.driverName})\nHolat: ${order.status}\nTezlik: ${order.speed} km/s\nProgress: ${order.progress}%\nYuk: ${order.material}`}</title>
-                          </g>
-                        );
-                      })}
-                    </svg>
-                  </div>
-                </div>
+                <MapWidget 
+                  transportOrders={data.transportOrders} 
+                  selectedMap={selectedMap} 
+                  setSelectedMap={setSelectedMap} 
+                  mapPoints={mapPoints} 
+                />
 
                 {/* Table 2: Mechanic and Fleet Repair Logs */}
                 <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
@@ -1226,125 +877,29 @@ export default function App() {
                 </div>
               </>
             ) : (
-              <div className="space-y-8">
-                {/* Fingerprint device panel */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Card 1: Device status */}
-                  <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
-                    <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                      <Fingerprint className="w-32 h-32 text-indigo-400" />
-                    </div>
-                    <div className="flex items-center space-x-4 mb-4">
-                      <div className="p-3 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-indigo-400">
-                        <Fingerprint className="w-6 h-6 animate-pulse" />
-                      </div>
-                      <div>
-                        <h4 className="font-extrabold text-white text-base">ZKTeco F22 Biometrik terminal</h4>
-                        <p className="text-xs text-slate-400 font-mono">ID: ZK-F22-MAIN | IP: 192.168.1.150:4370</p>
-                      </div>
-                    </div>
-                    <div className="space-y-2 text-sm font-mono font-medium">
-                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
-                        <span className="text-slate-400">Ulanish holati:</span>
-                        <span className="text-emerald-400 font-bold">FAOL (ONLAYN) 🟢</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
-                        <span className="text-slate-400">Sinxronizatsiya:</span>
-                        <span className="text-indigo-400">Real-vaqt (Push API)</span>
-                      </div>
-                      <div className="flex justify-between pb-0.5">
-                        <span className="text-slate-400">Barmoq izlari:</span>
-                        <span className="text-slate-200">45 ta ro'yxatda</span>
-                      </div>
-                    </div>
+              <div className="space-y-4">
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+                  <div className="flex items-center justify-center space-x-2 mb-6">
+                    <User className="w-5 h-5 text-indigo-400" />
+                    <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
+                      Тизим фойдаланувчилари
+                    </h3>
                   </div>
-
-                  {/* Card 2: Attendance Stats */}
-                  <div className="bg-gradient-to-br from-slate-900/80 to-slate-950/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
-                    <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 opacity-5 group-hover:opacity-10 transition-opacity">
-                      <User className="w-32 h-32 text-indigo-400" />
-                    </div>
-                    <div className="flex items-center space-x-4 mb-4">
-                      <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400">
-                        <User className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <h4 className="font-extrabold text-white text-base">Bugungi Davomat Statistikasi</h4>
-                        <p className="text-xs text-slate-400 font-mono">Kunlik faol xodimlar monitori</p>
-                      </div>
-                    </div>
-                    <div className="space-y-2 text-sm font-mono font-medium">
-                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
-                        <span className="text-slate-400">Faol (Ish joyida):</span>
-                        <span className="text-emerald-400 font-bold">{(data.stats.activeEmployeesCount || 0)} ta xodim</span>
-                      </div>
-                      <div className="flex justify-between border-b border-slate-800/60 pb-1.5">
-                        <span className="text-slate-400">Oxirgi faollik:</span>
-                        <span className="text-slate-200">{(data.attendanceLogs?.[0]?.timeFormatted || "--:--")} ({data.attendanceLogs?.[0]?.employeeName?.split(" ")[0] || "yo'q"})</span>
-                      </div>
-                      <div className="flex justify-between pb-0.5">
-                        <span className="text-slate-400">Bugungi kirishlar:</span>
-                        <span className="text-indigo-400">{(data.attendanceLogs?.filter(a => a.status === "Kirish").length || 0)} ta scan</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Table 3: Employee Attendance Log */}
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Fingerprint className="w-5 h-5 text-indigo-400" />
-                      <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                        Biometrik Qurilmadan Kelgan Davomat Jurnali
-                      </h3>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
-                      BUGUNGI SCANLAR
-                    </span>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
-                          <th className="py-3 px-1">Scan ID</th>
-                          <th className="py-3 px-2">Xodim Ismi / Roli</th>
-                          <th className="py-3 px-2">Sana / Vaqt</th>
-                          <th className="py-3 px-2 text-center">Davomat Holati</th>
-                          <th className="py-3 px-2 text-right">Qurilma</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/40">
-                        {data.attendanceLogs && data.attendanceLogs.map((log, idx) => (
-                          <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
-                            <td className="py-4 px-1 font-mono font-bold text-indigo-400 text-sm">{log.id}</td>
-                            <td className="py-4 px-2">
-                              <p className="font-extrabold text-slate-100 text-sm flex items-center space-x-1.5">
-                                <span className="text-indigo-400">👤</span>
-                                <span>{log.employeeName}</span>
-                              </p>
-                              <p className="text-xs text-slate-400 font-mono font-medium">{log.role.toUpperCase()}</p>
-                            </td>
-                            <td className="py-4 px-2 font-bold text-slate-200 text-sm">
-                              {log.timeFormatted} <span className="text-xs text-slate-500 font-mono">({log.timestamp.slice(0, 10)})</span>
-                            </td>
-                            <td className="py-4 px-2 text-center">
-                              <span className={`px-2.5 py-1 rounded-md text-xs font-black tracking-wider ${
-                                log.status === "Kirish" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                                log.status === "Chiqish" ? "bg-orange-500/10 text-orange-400 border border-orange-500/20" : 
-                                "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse"
-                              }`}>
-                                {log.status.toUpperCase()}
-                              </span>
-                            </td>
-                            <td className="py-4 px-2 text-right font-mono font-bold text-sm text-slate-300">
-                              {log.deviceName}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="flex flex-col gap-2">
+                    {data.users && data.users.map((user) => {
+                      const Meta = roleMeta[user.roleName] || roleMeta["Brigadir"];
+                      const RoleIcon = Meta?.icon || User;
+                      
+                      return (
+                        <div key={user.id} className="flex items-center justify-center bg-[#1e293b]/60 border border-slate-700/50 rounded-xl px-4 py-4 hover:bg-slate-700/60 transition-colors shadow-sm">
+                          <User className="w-5 h-5 text-slate-400 mr-2" />
+                          <span className="text-slate-100 font-bold text-base">{user.fullName}</span>
+                          <span className="text-slate-100 font-bold text-base ml-1.5 flex items-center">
+                            ({user.roleName} <RoleIcon className="w-4 h-4 ml-1.5 text-slate-300" />)
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

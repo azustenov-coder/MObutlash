@@ -15,9 +15,8 @@ from handlers import common, admin, controller, mechanic, assembler, user_manage
 # Bot loglarini sozlash
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Global bot obyekti
-bot = Bot(token=config.BOT_TOKEN)
-
+# Handlerlar bildirishnoma yuborish uchun ushbu obyektni import qiladi.
+bot: Bot | None = None
 
 class AutoRefreshMenuMiddleware(BaseMiddleware):
     """
@@ -41,7 +40,15 @@ class AutoRefreshMenuMiddleware(BaseMiddleware):
             user_id = event.from_user.id
  
         if user_id:
-            user = await db.get_user(user_id)
+            try:
+                user = await db.get_user(user_id)
+            except Exception as e:
+                logging.warning(f"DB get_user xatosi, qayta urinilmoqda: {e}")
+                try:
+                    user = await db.get_user(user_id)
+                except Exception as e2:
+                    logging.error(f"DB get_user 2-urinish ham muvaffaqiyatsiz: {e2}")
+                    user = None
             if user and user['is_approved'] == 1:
                 # Foydalanuvchi ma'lumotini `data` ga qo'shamiz (handlerlar ishlatishi uchun)
                 data['db_user'] = user
@@ -50,6 +57,12 @@ class AutoRefreshMenuMiddleware(BaseMiddleware):
  
  
 async def main():
+    global bot
+    if not config.BOT_TOKEN or config.BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        raise RuntimeError("BOT_TOKEN is not configured")
+
+    bot = Bot(token=config.BOT_TOKEN)
+
     # Ma'lumotlar bazasini ishga tushirish
     await db.init_db()
  
@@ -95,12 +108,13 @@ async def main():
     # Pollingni boshlash
     logging.info("Bot ishga tushmoqda...")
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.delete_webhook(drop_pending_updates=False)
         await dp.start_polling(bot)
     except Exception as e:
         logging.error(f"Botni ishga tushirishda xato yuz berdi: {e}")
     finally:
         await bot.session.close()
+        await db.close_db()
         await runner.cleanup()
 
 if __name__ == "__main__":

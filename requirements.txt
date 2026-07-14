@@ -1,5 +1,6 @@
 aiogram
 psycopg[binary]
+psycopg-pool
 aiohttp
 python-dotenv
 openpyxl

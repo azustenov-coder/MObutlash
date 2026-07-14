@@ -2,14 +2,13 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-import aiosqlite
 import database as db
 import os
 import json
 import re
 import aiohttp
-from handlers.common import get_main_keyboard, get_request_manage_keyboard
-from handlers.controller import STATUS_LABELS
+from handlers.common import get_main_keyboard, get_user_main_keyboard, get_request_manage_keyboard, get_mechanic_install_keyboard, get_mechanic_pickup_keyboard, refresh_vehicle_cache
+from handlers.controller import STATUS_LABELS, send_installation_photo
 
 router = Router()
 
@@ -187,10 +186,16 @@ async def show_broken_vehicles(message: Message):
         parse_mode="Markdown"
     )
 
-@router.message(F.text.in_(["Avtolar 🚗", "Автолар 🚗"]))
+@router.message(
+    F.text.in_(["Avtolar 🚗", "Автолар 🚗", "Avtomashinalar 🚗", "Автомашиналар 🚗"])
+    | F.text.startswith("Avtolar 🚗")
+    | F.text.startswith("Автолар 🚗")
+    | F.text.startswith("Avtomashinalar 🚗")
+    | F.text.startswith("Автомашиналар 🚗")
+)
 async def show_all_vehicles(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] not in ['mechanic', 'brigadier']:
+    if not user or user['role'] not in ['mechanic', 'brigadier', 'super_admin', 'manager', 'observer']:
         await message.answer("Сизда ушбу командани бажариш uchun huquq yo'q.")
         return
         
@@ -198,10 +203,18 @@ async def show_all_vehicles(message: Message):
     if not vehicles:
         await message.answer("Тизимда бирорта ҳам автоулов топилмади.")
         return
+
+    # The reply keyboard is rebuilt from PostgreSQL so a newly added vehicle is reflected immediately.
+    await refresh_vehicle_cache()
+    await message.answer(
+        f"🚗 Автомашиналар сони: <b>{len(vehicles)}</b>",
+        reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']),
+        parse_mode="HTML",
+    )
         
     await message.answer(
         "🚗 **Тизимдаги барча автолар рўйхати:**\n"
-        "Тафсилотларни кўриш yoki zayavka ochish uchun mashinani tanlang:",
+        "Ҳолати ва тафсилотларни кўриш учун машинани танланг:",
         reply_markup=get_vehicles_inline_keyboard(vehicles, "all"),
         parse_mode="Markdown"
     )
@@ -215,48 +228,26 @@ async def process_vehicle_info(callback: CallbackQuery):
     vehicle_name = parts[2]
     list_type = parts[3] if len(parts) > 3 else "all"
     
-    async with aiosqlite.connect(db.DB_PATH) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute("""
-            SELECT r.*, u.full_name as creator_name 
-            FROM requests r 
-            JOIN users u ON r.created_by = u.telegram_id 
-            WHERE r.vehicle_name = ? AND r.status NOT IN ('completed', 'rejected')
-            ORDER BY r.id DESC
-        """, (vehicle_name,)) as cursor:
-            active_requests = await cursor.fetchall()
-            
-        async with conn.execute("""
-            SELECT r.*, u.full_name as creator_name 
-            FROM requests r 
-            JOIN users u ON r.created_by = u.telegram_id 
-            WHERE r.vehicle_name = ? AND r.status IN ('completed', 'rejected')
-            ORDER BY r.id DESC LIMIT 5
-        """, (vehicle_name,)) as cursor:
-            history_requests = await cursor.fetchall()
-            
-    # Query vehicle status and reason from vehicles table
-    async with aiosqlite.connect(db.DB_PATH) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute("SELECT status, reason FROM vehicles WHERE name = ?", (vehicle_name,)) as cursor:
-            row = await cursor.fetchone()
-            veh_status = row['status'] if row else 'soz'
-            veh_reason = row['reason'] if row else None
+    active_requests, history_requests, vehicle = await db.get_vehicle_overview(vehicle_name)
+    veh_status = vehicle['status'] if vehicle else 'soz'
+    veh_reason = vehicle['reason'] if vehicle else None
             
     status_emoji = "🔴 Носоз ҳолат" if veh_status == 'nosoz' else "🟢 Соз ҳолат"
     
     text = (
-        f"🚗 <b>Автомобил:</b> {vehicle_name}\n"
+        f"🚗 <b>Автомобил рақами:</b> {vehicle_name}\n\n"
+        f"👤 <b>Ҳайдовчи:</b> {vehicle.get('driver_name') or 'Киритилмаган'}\n\n"
+        f"🚙 <b>Машина номи:</b> {vehicle.get('vehicle_model') or 'Киритилмаган'}\n\n"
         f"⚙️ <b>Ҳолати:</b> {status_emoji}\n"
     )
     if veh_status == 'nosoz' and veh_reason:
-        text += f"💬 <b>Сабаби:</b> {veh_reason}\n"
+        text += f"\n💬 <b>Сабаби:</b> {veh_reason}\n"
     text += "\n"
     
     if active_requests:
         text += "⚠️ <b>Фаол бузилишлар ва заявкалар:</b>\n"
         for r in active_requests:
-            created_date = r['created_at'][:16].replace('T', ' ')
+            created_date = db.format_datetime(r['created_at'])
             status_label = STATUS_LABELS.get(r['status'], r['status'])
             text += (
                 f"   • 🆔 <b>Заявка №{r['id']}</b> ({status_label})\n"
@@ -269,7 +260,7 @@ async def process_vehicle_info(callback: CallbackQuery):
     if history_requests:
         text += "📋 <b>Охирги таъмирлаш тарихи (максимум 5 та):</b>\n"
         for r in history_requests:
-            closed_date = r['updated_at'][:16].replace('T', ' ') if r['updated_at'] else "—"
+            closed_date = db.format_datetime(r['updated_at'])
             status_label = STATUS_LABELS.get(r['status'], r['status'])
             text += f"   • Заявка №{r['id']} — {r['description']} ({status_label}, {closed_date})\n"
             
@@ -400,7 +391,7 @@ async def process_veh_list_back(callback: CallbackQuery):
         vehicles = await db.get_all_vehicles()
         await callback.message.edit_text(
             "🚗 <b>Тизимдаги барча автолар рўйхати:</b>\n"
-            "Тафсилотларни кўриш yoki zayavka ochish uchun mashinani tanlang:",
+            "Ҳолати ва тафсилотларни кўриш учун машинани танланг:",
             reply_markup=get_vehicles_inline_keyboard(vehicles, "all"),
             parse_mode="HTML"
         )
@@ -700,9 +691,7 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
         description = f"Машина: {vehicle_name} | " + (f"Таъмирлаш: {item['name']}" if item_type == 'repair' else f"Сотиб олиш: {item['name']} ({item['qty']} та)")
         
         await db.update_request_details(editing_request_id, description, vehicle_name, photo_id, qty_used=None, qty_left=None, request_type=item_type)
-        async with aiosqlite.connect(db.DB_PATH) as conn:
-            await conn.execute("DELETE FROM request_items WHERE request_id = ?", (editing_request_id,))
-            await conn.commit()
+        await db.delete_request_items(editing_request_id)
             
         await db.add_request_item(
             request_id=editing_request_id,
@@ -724,7 +713,8 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
         
         managers = await db.get_users_by_role('manager')
         super_admins = await db.get_users_by_role('super_admin')
-        all_admins = list(managers) + list(super_admins)
+        observers = await db.get_users_by_role('observer')
+        all_admins = list(managers) + list(super_admins) + list(observers)
         for admin in all_admins:
             try:
                 from main import bot
@@ -772,7 +762,8 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
             
             managers = await db.get_users_by_role('manager')
             super_admins = await db.get_users_by_role('super_admin')
-            all_admins = list(managers) + list(super_admins)
+            observers = await db.get_users_by_role('observer')
+            all_admins = list(managers) + list(super_admins) + list(observers)
             for admin in all_admins:
                 try:
                     from main import bot
@@ -815,29 +806,136 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
             parse_mode="HTML"
         )
 
-@router.message(F.text.in_(["Mening zayavkalarim 📂", "Менинг заявкаларим 📂"]))
+@router.message(F.text.in_(["Mening zayavkalarim 📂", "Менинг заявкаларим 📂"]) | F.text.startswith("Mening zayavkalarim 📂") | F.text.startswith("Менинг заявкаларим 📂"))
 async def show_my_requests(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user or user['role'] not in ['mechanic', 'brigadier']:
         await message.answer("Сизда заявкаларни кўриш ҳуқуқи йўқ.")
         return
         
-    my_reqs = await db.get_my_requests(message.from_user.id)
+    my_reqs = await db.get_all_my_requests(message.from_user.id)
     if not my_reqs:
-        await message.answer("Сизда faol (yakunlanmagan) zayavkalar mavjud emas.")
+        await message.answer("Сиз ҳали заявка яратмагансиз.")
         return
         
-    text = "📂 <b>Сизнинг заявкаларингиз рўйхати:</b>\n\n"
+    await message.answer("📂 <b>Сизнинг барча заявкаларингиз:</b>", parse_mode="HTML")
     for r in my_reqs[:15]:
         status_label = STATUS_LABELS.get(r['status'], r['status'])
-        text += (
+        text = (
             f"🆔 <b>Заявка №{r['id']}</b>\n"
             f"📋 Тавсиф: {r['description']}\n"
             f"⚙️ Ҳолати: {status_label}\n"
-            f"📅 Сана: {r['created_at'][:16].replace('T', ' ')}\n"
+            f"📅 Сана: {db.format_datetime(r['created_at'])}\n"
+            f"-------------------\n"
+        )
+        await message.answer(text, parse_mode="HTML")
+        await send_installation_photo(message, r)
+
+
+@router.message(F.text.in_(["Tugallanmagan zayavkalar ⏳", "Тугалланмаган заявкалар ⏳"]) | F.text.startswith("Tugallanmagan zayavkalar ⏳") | F.text.startswith("Тугалланмаган заявкалар ⏳"))
+async def show_unfinished_requests(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or user['role'] not in ['mechanic', 'brigadier']:
+        await message.answer("Сизда заявкаларни кўриш ҳуқуқи йўқ.")
+        return
+
+    active_requests = await db.get_my_requests(message.from_user.id)
+    if not active_requests:
+        await message.answer("✅ Сизда тугалланмаган заявка мавжуд эмас.")
+        return
+
+    text = "⏳ <b>Тугалланмаган заявкаларингиз:</b>\n\n"
+    for r in active_requests[:15]:
+        status_label = STATUS_LABELS.get(r['status'], r['status'])
+        text += (
+            f"🆔 <b>Заявка №{r['id']}</b>\n"
+            f"🚗 Машина: {r['vehicle_name'] or '—'}\n"
+            f"📋 Тавсиф: {r['description']}\n"
+            f"⚙️ Ҳолати: <b>{status_label}</b>\n"
+            f"📅 Сана: {db.format_datetime(r['created_at'])}\n"
             f"-------------------\n"
         )
     await message.answer(text, parse_mode="HTML")
+
+
+@router.message(F.text.in_(["Tugallangan zayavkalar ✅", "Тугалланган заявkalar ✅"]) | F.text.startswith("Tugallangan zayavkalar ✅") | F.text.startswith("Тугалланган заявкалар ✅"))
+async def show_my_completed_requests(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or user['role'] not in ['mechanic', 'brigadier']:
+        await message.answer("Сизда ушбу маълумотни кўриш ҳуқуқи йўқ.")
+        return
+
+    requests = await db.get_my_completed_requests(message.from_user.id)
+    if not requests:
+        await message.answer("Ҳозирча сизда тугалланган заявка йўқ.")
+        return
+
+    await message.answer("✅ <b>Сизнинг тугалланган заявкаларингиз:</b>", parse_mode="HTML")
+    for request in requests:
+        await message.answer(
+            f"🆔 <b>Заявка №{request['id']}</b>\n"
+            f"🚗 Машина: {request['vehicle_name'] or '—'}\n"
+            f"📋 Тавсиф: {request['description']}\n"
+            f"🕒 Якунланган: {db.format_datetime(request['updated_at'])}",
+            parse_mode="HTML",
+        )
+        await send_installation_photo(message, request)
+
+
+@router.message(F.text.in_(["Skladdan olish 📦", "Складдан олиш 📦"]) | F.text.startswith("Skladdan olish 📦") | F.text.startswith("Складдан олиш 📦"))
+async def show_requests_ready_for_pickup(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or user['role'] not in ['mechanic', 'brigadier']:
+        await message.answer("Сизда ушбу маълумотни кўриш ҳуқуқи йўқ.")
+        return
+
+    requests = await db.get_requests_ready_for_pickup(message.from_user.id)
+    if not requests:
+        await message.answer("📦 Ҳозирча складдан олишга тайёр маҳсулот йўқ.")
+        return
+
+    await message.answer("📦 <b>Складдан олишга тайёр заявкалар:</b>", parse_mode="HTML")
+    for request in requests:
+        items = await db.get_request_items(request['id'])
+        items_text = '\n'.join(
+            f"• {item['item_name']} — {item['quantity_requested']} dona" for item in items
+        ) or '—'
+        await message.answer(
+            f"🆔 <b>Заявка №{request['id']}</b>\n"
+            f"🚗 Машина: {request['vehicle_name'] or '—'}\n"
+            f"📋 Тавсиф: {request['description']}\n"
+            f"📦 Маҳсулотлар:\n{items_text}\n\n"
+            "Маҳсулотни складдан олганингиздан кейин tasdiqlang.",
+            reply_markup=get_mechanic_pickup_keyboard(request['id']),
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(F.data.startswith("mech_pickup_"))
+async def confirm_warehouse_pickup(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    if not user or user['role'] not in ['mechanic', 'brigadier']:
+        await callback.answer("Сизда ушбу операцияни бажариш ҳуқуқи йўқ.", show_alert=True)
+        return
+
+    request_id = int(callback.data.split("_")[2])
+    try:
+        await db.issue_request_to_creator(request_id, callback.from_user.id)
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    except Exception as exc:
+        print(f"Skladdan olishda xato: {exc}")
+        await callback.answer("Skladdan olishni qayd etishda xato yuz berdi.", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f"✅ <b>Заявка №{request_id}</b> бўйича маҳсулотлар складдан олинди.\n"
+        "📊 Омбордан расxод қайд этилди. Ўрнатиб бўлгач, расм юбориб якунланг.",
+        reply_markup=get_mechanic_install_keyboard(request_id),
+        parse_mode="HTML",
+    )
+    await callback.answer("Mahsulotlar olindi, rasxod qayd etildi.")
 
 @router.callback_query(F.data.startswith("mech_install_"))
 async def process_mechanic_install(callback: CallbackQuery, state: FSMContext):
@@ -847,6 +945,13 @@ async def process_mechanic_install(callback: CallbackQuery, state: FSMContext):
         return
         
     request_id = int(callback.data.split("_")[2])
+    request = await db.get_request(request_id)
+    if not request or request['created_by'] != callback.from_user.id:
+        await callback.answer("Zayavka topilmadi yoki sizga tegishli emas.", show_alert=True)
+        return
+    if request['status'] != 'issued_to_mechanic':
+        await callback.answer("Avval mahsulotni skladdan qabul qiling.", show_alert=True)
+        return
     await state.clear()
     await state.update_data(install_request_id=request_id)
     await state.set_state(RequestInstallationStates.waiting_for_installation_photo)

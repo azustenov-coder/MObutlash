@@ -1,9 +1,23 @@
 from aiogram import Router, F
+from aiogram.filters import Filter
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 import database as db
 from handlers.common import get_request_manage_keyboard
 
 router = Router()
+
+
+class LeadershipRoleFilter(Filter):
+    """Let this shared menu be handled only for the three leadership roles."""
+    async def __call__(self, message: Message) -> bool:
+        user = await db.get_user(message.from_user.id)
+        return bool(user and user['role'] in ['super_admin', 'manager', 'observer'])
+
+# Tasdiqlashdan keyingi ta'minot jarayoni holatlari.
+APPROVED_PIPELINE_STATUSES = {
+    'approved', 'delivering', 'searching', 'purchased',
+    'waiting_receipt', 'ready_for_installation', 'issued_to_mechanic', 'completed',
+}
 
 STATUS_LABELS = {
     'pending_approval': 'Тасдиқлаш кутилмоқда ⏳',
@@ -14,18 +28,96 @@ STATUS_LABELS = {
     'purchased': 'Сотиб олинди (Йўлда) 🛒',
     'waiting_receipt': 'Қабул кутилмоқда 📥',
     'ready_for_installation': 'Омборга келган (Ўрнатилиши кутилмоқда) 🛠️',
+    'issued_to_mechanic': 'Складдан олинди, ўрнатиш кутилмоқда 📦',
     'completed': 'Ўрнатилди ва якунланди ✅',
     'rejected': 'Рад этилди ❌'
 }
 
-@router.message(F.text.in_(["Kutilayotgan zayavkalar 📥", "Кутилаётган заявкалар 📥"]))
+
+async def send_installation_photo(message: Message, request: dict):
+    """Show the mechanic's proof photo directly under a completed request."""
+    photo_id = request.get('installed_part_photo')
+    if request.get('status') != 'completed' or not photo_id:
+        return
+    try:
+        await message.answer_photo(
+            photo=photo_id,
+            caption=f"📸 Заявка №{request['id']} — ўрнатилган ҳолат расми",
+        )
+    except Exception as exc:
+        print(f"O'rnatish rasmini ko'rsatishda xato: {exc}")
+
+
+@router.message(
+    F.text.in_(["Tugallanmagan zayavkalar ⏳", "Тугалланмаган заявкалар ⏳"])
+    | F.text.startswith("Tugallanmagan zayavkalar ⏳")
+    | F.text.startswith("Тугалланмаган заявкалар ⏳"),
+    LeadershipRoleFilter(),
+)
+async def show_open_requests_for_leadership(message: Message):
+    requests = await db.get_open_requests()
+    if not requests:
+        await message.answer("✅ Ҳозирда тугалланмаган заявка мавжуд эмас.")
+        return
+
+    chunks = []
+    current = "⏳ <b>Барча тугалланмаган заявкалар:</b>\n\n"
+    for request in requests:
+        status_label = STATUS_LABELS.get(request['status'], request['status'])
+        request_block = (
+            f"🆔 <b>Заявка №{request['id']}</b>\n"
+            f"👤 Яратувчи: {request['creator_name'] or '—'}\n"
+            f"🚗 Машина: {request['vehicle_name'] or '—'}\n"
+            f"📋 Тавсиф: {request['description']}\n"
+            f"⚙️ Ҳолати: <b>{status_label}</b>\n"
+            f"🕒 Янгиланган: {db.format_datetime(request['updated_at'])}\n"
+            f"-------------------\n"
+        )
+        if len(current) + len(request_block) > 3800 and current.strip():
+            chunks.append(current)
+            current = request_block
+        else:
+            current += request_block
+    if current.strip():
+        chunks.append(current)
+
+    for chunk in chunks:
+        await message.answer(chunk, parse_mode="HTML")
+
+
+@router.message(
+    F.text.in_(["Tugallangan zayavkalar ✅", "Тугалланган заявкалар ✅"])
+    | F.text.startswith("Tugallangan zayavkalar ✅")
+    | F.text.startswith("Тугалланган заявкалар ✅"),
+    LeadershipRoleFilter(),
+)
+async def show_completed_requests_for_leadership(message: Message):
+    requests = await db.get_completed_requests()
+    if not requests:
+        await message.answer("Ҳозирча якунланган заявка мавжуд эмас.")
+        return
+
+    await message.answer("✅ <b>Барча тугалланган заявкалар:</b>", parse_mode="HTML")
+    for request in requests:
+        await message.answer(
+            f"🆔 <b>Заявка №{request['id']}</b>\n"
+            f"👤 Яратувчи: {request['creator_name'] or '—'}\n"
+            f"🚗 Машина: {request['vehicle_name'] or '—'}\n"
+            f"📋 Тавсиф: {request['description']}\n"
+            f"🕒 Якунланган: {db.format_datetime(request['updated_at'])}",
+            parse_mode="HTML",
+        )
+        await send_installation_photo(message, request)
+
+@router.message(F.text.in_(["Kutilayotgan zayavkalar 📥", "Кутилаётган заявкалар 📥"]) | F.text.startswith("Kutilayotgan zayavkalar 📥") | F.text.startswith("Кутилаётган заявкалар 📥"))
 async def list_pending_requests(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] not in ['manager', 'super_admin']:
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
         await message.answer("Сизда ушбу командани бажариш учун ҳуқуқ йўқ.")
         return
         
     pending = await db.get_requests_by_status('pending_approval')
+    pending.extend(await db.get_requests_by_status('pending_admin_approval'))
     if not pending:
         msg_text = "Ҳозирда тасдиқлашингиз кутилаётган заявкалар йўқ."
         await message.answer(msg_text)
@@ -42,12 +134,18 @@ async def list_pending_requests(message: Message):
                 f"Етишмайди: {item['quantity_missing']}\n"
             )
             
+        created_at = r['created_at']
+        if hasattr(created_at, 'strftime'):
+            date_str = created_at.strftime('%Y-%m-%d %H:%M')
+        else:
+            date_str = str(created_at)[:16].replace('T', ' ')
+            
         text = (
             f"📝 <b>Заявка №{r['id']}</b>\n"
             f"👤 <b>Яратувчи:</b> {r['creator_name']} (ID: {r['created_by']})\n"
             f"📋 <b>Тавсиф:</b> {r['description']}\n\n"
             f"🔍 <b>Маҳсулотлар таркиби:</b>\n{items_text}\n"
-            f"📅 <b>Яратилган вақт:</b> {r['created_at'][:19].replace('T', ' ')}"
+            f"📅 <b>Яратилган вақт:</b> {date_str}"
         )
         await message.answer(
             text, 
@@ -58,7 +156,7 @@ async def list_pending_requests(message: Message):
 @router.callback_query(F.data.startswith("req_approve_"))
 async def approve_request(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    if not user or user['role'] not in ['manager', 'super_admin']:
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
         await callback.answer("Сизда заявкани тасдиқлаш ҳуқуқи йўқ!", show_alert=True)
         return
         
@@ -75,7 +173,7 @@ async def approve_request(callback: CallbackQuery):
         return
         
     # Statusni 'approved' (Tasdiqlangan) ga o'zgartirish
-    role_label = 'super_admin' if user['role'] == 'super_admin' else 'manager'
+    role_label = user['role']
     await db.update_request_status(request_id, 'approved', callback.from_user.id, role_label)
     await callback.answer("Заявка тасдиқланди ва таъминотчиларга юборилди.")
     
@@ -89,8 +187,16 @@ async def approve_request(callback: CallbackQuery):
             f"Етишмайди (Олинади): {item['quantity_missing']}\n"
         )
         
-    created_date = req['created_at'][:16].replace('T', ' ')
-    role_display = "Супер Админ 👑" if user['role'] == 'super_admin' else "Бошқарувчи 💼"
+    created_at = req['created_at']
+    if hasattr(created_at, 'strftime'):
+        created_date = created_at.strftime('%Y-%m-%d %H:%M')
+    else:
+        created_date = str(created_at)[:16].replace('T', ' ')
+    role_display = {
+        'super_admin': "Супер Админ 👑",
+        'manager': "Бошқарувчи 💼",
+        'observer': "Бошқарувчи 2 💼",
+    }[user['role']]
     summary = (
         f"✅ <b>Заявка №{request_id} {role_display} томонидан тасдиқланди ва етказишга юборилди.</b>\n"
         f"📋 Тавсиф: {req['description']}\n"
@@ -144,6 +250,27 @@ async def approve_request(callback: CallbackQuery):
                 )
         except Exception as e:
             print(f"Ta'minotchini ogohlantirishda xato: {e}")
+
+    # Tasdiqlash natijasini boshqa boshqaruvchilarga real vaqt rejimida yuborish.
+    # Ular keyingi menyu so'rovida ham aynan shu holatni PostgreSQL dan ko'radi.
+    reviewers = list(await db.get_users_by_role('manager'))
+    reviewers.extend(await db.get_users_by_role('super_admin'))
+    reviewers.extend(await db.get_users_by_role('observer'))
+    for reviewer in reviewers:
+        if reviewer['telegram_id'] == callback.from_user.id:
+            continue
+        try:
+            from main import bot
+            await bot.send_message(
+                reviewer['telegram_id'],
+                f"✅ <b>Zayavka №{request_id} tasdiqlandi.</b>\n"
+                f"👤 Tasdiqladi: {user['full_name']} ({role_display})\n"
+                f"📋 Tavsif: {req['description']}\n"
+                f"📅 Sana: {created_date}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            print(f"Boshqaruvchini tasdiqlash haqida ogohlantirishda xato: {e}")
             
     # Yaratuvchini (Mexanik/Brigadir) ogohlantirish
     try:
@@ -158,7 +285,7 @@ async def approve_request(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("req_reject_"))
 async def reject_request(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    if not user or user['role'] not in ['manager', 'super_admin']:
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
         await callback.answer("Сизда заявкани рад этиш ҳуқуқи йўқ!", show_alert=True)
         return
         
@@ -173,7 +300,11 @@ async def reject_request(callback: CallbackQuery):
     await db.update_request_status(request_id, 'rejected', callback.from_user.id, role_label)
     await callback.answer("Заявка рад этилди.")
     
-    created_date = req['created_at'][:16].replace('T', ' ')
+    created_at = req['created_at']
+    if hasattr(created_at, 'strftime'):
+        created_date = created_at.strftime('%Y-%m-%d %H:%M')
+    else:
+        created_date = str(created_at)[:16].replace('T', ' ')
     role_display = "Супер Админ 👑" if user['role'] == 'super_admin' else "Бошқарувчи 💼"
     summary_text = (
         f"❌ **Заявка №{request_id} {role_display} томонидан рад этилди.**\n"
@@ -208,7 +339,7 @@ async def reject_request(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("req_revision_"))
 async def process_req_revision(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
-    if not user or user['role'] not in ['manager', 'super_admin']:
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
         await callback.answer("Сизда ушбу операцияни бажариш ҳуқуқи йўқ!", show_alert=True)
         return
         
@@ -223,7 +354,11 @@ async def process_req_revision(callback: CallbackQuery):
     await db.update_request_status(request_id, 'needs_revision', callback.from_user.id, role_label)
     await callback.answer("Заявка қайта ишлашга юборилди.")
     
-    created_date = req['created_at'][:16].replace('T', ' ')
+    created_at = req['created_at']
+    if hasattr(created_at, 'strftime'):
+        created_date = created_at.strftime('%Y-%m-%d %H:%M')
+    else:
+        created_date = str(created_at)[:16].replace('T', ' ')
     role_display = "Супер Админ 👑" if user['role'] == 'super_admin' else "Бошқарувчи 💼"
     summary_text = (
         f"🔄 **Заявка №{request_id} қайта ишлашга қайтариб юборилди.**\n"
@@ -259,22 +394,24 @@ async def process_req_revision(callback: CallbackQuery):
     except Exception as e:
         print(f"Yaratuvchini ogohlantirishda xato (qayta ishlash): {e}")
 
-@router.message(F.text.in_(["Barcha zayavkalar 📝", "Барча заявкалар 📝"]))
+@router.message(F.text.in_(["Barcha zayavkalar 📝", "Барча заявкалар 📝"]) | F.text.startswith("Barcha zayavkalar 📝") | F.text.startswith("Барча заявкалар 📝"))
 async def show_all_requests(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] not in ['super_admin', 'manager', 'observer', 'warehouseman']:
+    if not user or user['role'] not in ['super_admin', 'manager', 'observer']:
         await message.answer("Сизда заявкаларни кўриш ҳуқуқи йўқ.")
         return
         
     requests = await db.get_all_requests()
-    active_requests = [r for r in requests if r['status'] not in ['completed', 'rejected']]
-    if not active_requests:
-        await message.answer("Тизимда фаол (тугатилмаган) заявкалар топилмади.")
+    approved_requests = [
+        r for r in requests if r['status'] in APPROVED_PIPELINE_STATUSES
+    ]
+    if not approved_requests:
+        await message.answer("Тизимда тасдиқланган ва таъминот жараёнига юборилган заявкалар йўқ.")
         return
         
-    await message.answer("📝 <b>Фаол (жараёндаgi) заявкалар рўйхати:</b>", parse_mode="HTML")
+    await message.answer("📝 <b>Тасдиқланган ва таъминот жараёнидаги заявкалар:</b>", parse_mode="HTML")
     
-    for r in active_requests:
+    for r in approved_requests:
         status_label = STATUS_LABELS.get(r['status'], r['status'])
         
         # Mahsulotlarni olamiz
@@ -283,26 +420,28 @@ async def show_all_requests(message: Message):
         for item in items:
             items_text += f"   • {item['item_name']}: {item['quantity_requested']} та (Етишмайди: {item['quantity_missing']})\n"
             
+        created_at = r['created_at']
+        if hasattr(created_at, 'strftime'):
+            date_str = created_at.strftime('%Y-%m-%d %H:%M')
+        else:
+            date_str = str(created_at)[:16].replace('T', ' ')
+            
         text = (
             f"🆔 <b>Заявка №{r['id']}</b>\n"
             f"👤 Яратувчи: {r['creator_name']}\n"
             f"📋 Тавсиф: {r['description']}\n"
             f"⚙️ Ҳолати: {status_label}\n"
             f"🔍 Маҳсулотлар:\n{items_text}"
-            f"📅 Сана: {r['created_at'][:16].replace('T', ' ')}"
+            f"📅 Сана: {date_str}"
         )
         
-        # Boshqaruvchi va Super Admin uchun tasdiqlash tugmalari (agar status pending_approval bo'lsa)
-        reply_markup = None
-        if user['role'] in ['manager', 'super_admin'] and r['status'] == 'pending_approval':
-            reply_markup = get_request_manage_keyboard(r['id'])
-            
-        await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+        await message.answer(text, parse_mode="HTML")
+        await send_installation_photo(message, r)
 
-@router.message(F.text.in_(["Заявкалар ҳаракати 🔄", "Zayavkalar harakati 🔄"]))
+@router.message(F.text.in_(["Заявкалар ҳаракати 🔄", "Zayavkalar harakati 🔄"]) | F.text.startswith("Заявкалар ҳаракати 🔄") | F.text.startswith("Zayavkalar harakati 🔄"))
 async def show_requests_movement(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] not in ['super_admin', 'manager']:
+    if not user or user['role'] not in ['super_admin', 'manager', 'observer']:
         await message.answer("Сизда ушбу маълумотни кўриш ҳуқуқи йўқ.")
         return
         
@@ -335,13 +474,20 @@ async def show_requests_movement(message: Message):
         elif r['status'] == 'rejected':
             flow_text += f"❌ <b>Рад этилди</b>\n"
 
+        created_at = r['created_at']
+        if hasattr(created_at, 'strftime'):
+            date_str = created_at.strftime('%Y-%m-%d %H:%M')
+        else:
+            date_str = str(created_at)[:16].replace('T', ' ')
+            
         text = (
             f"🆔 <b>Заявка №{r['id']}</b>\n"
             f"🚗 Машина: <b>{r['vehicle_name']}</b>\n"
             f"⚙️ Ҳолати: <b>{status_label}</b>\n\n"
             f"📈 <b>Жараён занжири (Йўналиш):</b>\n{flow_text}\n"
-            f"📅 Сана: {r['created_at'][:16].replace('T', ' ')}\n"
+            f"📅 Сана: {date_str}\n"
             f"-------------------"
         )
         await message.answer(text, parse_mode="HTML")
+        await send_installation_photo(message, r)
 

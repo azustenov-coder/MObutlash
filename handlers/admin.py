@@ -15,11 +15,11 @@ def get_approve_keyboard(telegram_id: int):
         ]
     ])
 
-@router.message(F.text.in_(["A'zolik so'rovlari 👥", "Аъзолик сўровлари 👥"]))
+@router.message(F.text.in_(["A'zolik so'rovlari 👥", "Аъзолик сўровлари 👥"]) | F.text.startswith("A'zolik so'rovlari 👥") | F.text.startswith("Аъзолик сўровлари 👥"))
 async def show_pending_users(message: Message):
     # Foydalanuvchi admin ekanligini tekshiramiz
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] != 'super_admin':
+    if not user or user['role'] not in ['super_admin', 'manager', 'observer']:
         await message.answer("Сизда ушбу командани бажариш учун ҳуқуқ йўқ.")
         return
         
@@ -45,7 +45,7 @@ async def show_pending_users(message: Message):
 @router.callback_query(F.data.startswith("approve_"))
 async def process_approve(callback: CallbackQuery):
     admin = await db.get_user(callback.from_user.id)
-    if not admin or admin['role'] != 'super_admin':
+    if not admin or admin['role'] not in ['super_admin', 'manager', 'observer']:
         await callback.answer("Рухсат берилмаган!", show_alert=True)
         return
         
@@ -81,7 +81,7 @@ async def process_approve(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("reject_"))
 async def process_reject(callback: CallbackQuery):
     admin = await db.get_user(callback.from_user.id)
-    if not admin or admin['role'] != 'super_admin':
+    if not admin or admin['role'] not in ['super_admin', 'manager', 'observer']:
         await callback.answer("Рухсат берилмаган!", show_alert=True)
         return
         
@@ -109,20 +109,15 @@ async def process_reject(callback: CallbackQuery):
     except Exception as e:
         print(f"Foydalanuvchini ogohlantirishda xato (rad etish): {e}")
 
-@router.message(F.text.in_(["Foydalanuvchilar ro'yxati 📋", "Ходимлар рўйхати 📋"]))
+@router.message(F.text.in_(["Foydalanuvchilar ro'yxati 📋", "Ходимлар рўйхати 📋"]) | F.text.startswith("Foydalanuvchilar ro'yxati 📋") | F.text.startswith("Ходимлар рўйхати 📋"))
 async def show_users_list(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user or user['role'] not in ['super_admin', 'observer', 'manager']:
         await message.answer("Сизда ушбу маълумотни кўриш ҳуқуқи йўқ.")
         return
         
-    # Barcha tasdiqlangan foydalanuvchilarni ko'rsatish
-    import aiosqlite
-    from config import DB_PATH
-    async with aiosqlite.connect(DB_PATH) as db_conn:
-        db_conn.row_factory = aiosqlite.Row
-        async with db_conn.execute("SELECT * FROM users WHERE is_approved = 1 ORDER BY role") as cursor:
-            users = await cursor.fetchall()
+    # Barcha tasdiqlangan foydalanuvchilarni PostgreSQL dan ko'rsatish
+    users = await db.get_approved_users()
             
     if not users:
         await message.answer("Тизимда тасдиқланган ходимлар йўқ.")
@@ -132,7 +127,7 @@ async def show_users_list(message: Message):
     keyboard_buttons = []
     
     for u in users:
-        role_label = "Super Admin 👑" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
+        role_label = "Super Admin" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
         text += (
             f"👤 **{u['full_name']}**\n"
             f"📞 Телефон: {u['phone']}\n"
@@ -141,8 +136,15 @@ async def show_users_list(message: Message):
             f"-------------------\n"
         )
         
-        # Super admin va manager o'zidan boshqa hammaga xabar yubora oladi
-        if user['role'] in ['super_admin', 'manager'] and u['telegram_id'] != message.from_user.id:
+        # Super Admin xodim akkauntini boshqaradi; qolgan boshqaruvchilar xabar yozadi.
+        if user['role'] == 'super_admin' and u['telegram_id'] != message.from_user.id:
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text=f"👤 {u['full_name']} ({ROLE_LABELS.get(u['role'], u['role'])[:15]})",
+                    callback_data=f"manage_user_{u['telegram_id']}"
+                )
+            ])
+        elif user['role'] in ['manager', 'observer'] and u['telegram_id'] != message.from_user.id:
             keyboard_buttons.append([
                 InlineKeyboardButton(
                     text=f"✉️ {u['full_name']} ({ROLE_LABELS.get(u['role'], u['role'])[:15]})", 
@@ -162,13 +164,144 @@ async def show_users_list(message: Message):
         await message.answer(text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
+def get_employee_manage_keyboard(telegram_id: int):
+    roles = [
+        ('manager', 'Boshqaruvchi 💼'),
+        ('observer', 'Boshqaruvchi 2 💼'),
+        ('mechanic', 'Mexanik 🔧'),
+        ('brigadier', 'Brigadir RB 🚛'),
+        ('courier', "Ta'minotchi 🚚"),
+        ('warehouseman', 'Skladchik 📦'),
+    ]
+    buttons = [
+        InlineKeyboardButton(text=label, callback_data=f"userrole_{telegram_id}_{role}")
+        for role, label in roles
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        buttons[0:2], buttons[2:4], buttons[4:6],
+        [InlineKeyboardButton(text="Xodimni o'chirish 🗑", callback_data=f"userdel_{telegram_id}")],
+        [InlineKeyboardButton(text="Bekor qilish", callback_data="user_manage_cancel")],
+    ])
+
+
+@router.callback_query(F.data.startswith("manage_user_"))
+async def manage_employee(callback: CallbackQuery):
+    admin = await db.get_user(callback.from_user.id)
+    if not admin or admin['role'] != 'super_admin':
+        await callback.answer("Bu amal faqat Super Admin uchun.", show_alert=True)
+        return
+
+    target_id = int(callback.data.removeprefix("manage_user_"))
+    target = await db.get_user(target_id)
+    if not target:
+        await callback.answer("Xodim topilmadi.", show_alert=True)
+        return
+    if target_id == callback.from_user.id or target['role'] == 'super_admin':
+        await callback.answer("Super Admin akkauntini bu oynadan o'zgartirib bo'lmaydi.", show_alert=True)
+        return
+
+    role_name = ROLE_LABELS.get(target['role'], target['role'])
+    await callback.message.edit_text(
+        f"👤 <b>{target['full_name']}</b>\n📞 {target['phone']}\n"
+        f"🔐 Hozirgi roli: {role_name}\n\nYangi rolni tanlang yoki xodimni o'chiring.",
+        reply_markup=get_employee_manage_keyboard(target_id),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("userrole_"))
+async def change_employee_role(callback: CallbackQuery):
+    admin = await db.get_user(callback.from_user.id)
+    if not admin or admin['role'] != 'super_admin':
+        await callback.answer("Bu amal faqat Super Admin uchun.", show_alert=True)
+        return
+
+    _, target_id_text, role = callback.data.split("_", 2)
+    target_id = int(target_id_text)
+    target = await db.get_user(target_id)
+    if role not in ROLE_LABELS or not target or target_id == callback.from_user.id or target['role'] == 'super_admin':
+        await callback.answer("Bu amalni bajarib bo'lmaydi.", show_alert=True)
+        return
+
+    await db.update_user_role(target_id, role)
+    new_role_name = ROLE_LABELS[role]
+    await callback.message.edit_text(
+        f"✅ <b>{target['full_name']}</b> roli yangilandi: {new_role_name}",
+        parse_mode="HTML",
+    )
+    try:
+        from main import bot
+        await bot.send_message(
+            target_id,
+            f"🔔 Sizning rolingiz Super Admin tomonidan yangilandi: <b>{new_role_name}</b>",
+            reply_markup=get_main_keyboard(role),
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        print(f"Rol yangilanishini yuborishda xato: {exc}")
+    await callback.answer("Rol yangilandi.")
+
+
+@router.callback_query(F.data.startswith("userdel_"))
+async def confirm_employee_delete(callback: CallbackQuery):
+    admin = await db.get_user(callback.from_user.id)
+    if not admin or admin['role'] != 'super_admin':
+        await callback.answer("Bu amal faqat Super Admin uchun.", show_alert=True)
+        return
+
+    target_id = int(callback.data.removeprefix("userdel_"))
+    target = await db.get_user(target_id)
+    if not target or target_id == callback.from_user.id or target['role'] == 'super_admin':
+        await callback.answer("Bu akkauntni o'chirib bo'lmaydi.", show_alert=True)
+        return
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Ha, o'chiraman", callback_data=f"userdelok_{target_id}")],
+        [InlineKeyboardButton(text="Bekor qilish", callback_data="user_manage_cancel")],
+    ])
+    await callback.message.edit_text(
+        f"⚠️ <b>{target['full_name']}</b> botdan o'chirilsinmi? Bu amalni qaytarib bo'lmaydi.",
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("userdelok_"))
+async def delete_employee(callback: CallbackQuery):
+    admin = await db.get_user(callback.from_user.id)
+    if not admin or admin['role'] != 'super_admin':
+        await callback.answer("Bu amal faqat Super Admin uchun.", show_alert=True)
+        return
+
+    target_id = int(callback.data.removeprefix("userdelok_"))
+    target = await db.get_user(target_id)
+    if not target or target_id == callback.from_user.id or target['role'] == 'super_admin':
+        await callback.answer("Bu akkauntni o'chirib bo'lmaydi.", show_alert=True)
+        return
+    await db.delete_user(target_id)
+    await callback.message.edit_text(f"✅ <b>{target['full_name']}</b> bot ro'yxatidan o'chirildi.", parse_mode="HTML")
+    try:
+        from main import bot
+        await bot.send_message(target_id, "ℹ️ Sizning botdagi akkauntingiz Super Admin tomonidan o'chirildi.")
+    except Exception as exc:
+        print(f"O'chirish xabarini yuborishda xato: {exc}")
+    await callback.answer("Xodim o'chirildi.")
+
+
+@router.callback_query(F.data == "user_manage_cancel")
+async def cancel_employee_manage(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("Bekor qilindi.")
+
+
 class AdminMessageStates(StatesGroup):
     waiting_for_message = State()
 
 @router.callback_query(F.data.startswith("write_msg_"))
 async def start_writing_message(callback: CallbackQuery, state: FSMContext):
     user = await db.get_user(callback.from_user.id)
-    if not user or user['role'] not in ['super_admin', 'manager']:
+    if not user or user['role'] not in ['super_admin', 'manager', 'observer']:
         await callback.answer("Сизда хабар юбориш ҳуқуқи йўқ!", show_alert=True)
         return
         
@@ -183,7 +316,7 @@ async def start_writing_message(callback: CallbackQuery, state: FSMContext):
     
     role_label = ROLE_LABELS.get(target_user['role'], target_user['role'])
     if target_user['role'] == 'super_admin':
-        role_label = "Super Admin 👑"
+        role_label = "Super Admin"
         
     await callback.message.answer(
         f"✍️ **{target_user['full_name']}** ({role_label}) учун хабарингизни ёзинг:\n"
@@ -210,7 +343,7 @@ async def send_message_to_user(message: Message, state: FSMContext):
     sender_name = sender['full_name']
     sender_role = ROLE_LABELS.get(sender['role'], sender['role'])
     if sender['role'] == 'super_admin':
-        sender_role = "Super Admin 👑"
+        sender_role = "Super Admin"
         
     try:
         from main import bot

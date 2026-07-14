@@ -1,3 +1,9 @@
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load .env from the dashboard root directory
+dotenv.config({ path: path.join(process.cwd(), '.env') });
+
 import pkg from 'pg';
 const { Pool } = pkg;
 import { BotEvent, InventoryItem, TransportOrder, MechanicReport, User } from "./types.js";

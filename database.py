@@ -1,21 +1,97 @@
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 import os
 import datetime
+import time
 from config import DB_PATH
+
 PREDEFINED_VEHICLES = ['102', '103', '106', '107', '108', '109', '112', '115', '117', '122', '123', '477', '478', '480', '481', '482', '484', '485', '488', '492', '493', '494', '497', '615', '617', '499', '489', '487', '124', '125', '126', '127', '9154', '9155', '9156', '9157', '9158', '9159', '361', '362', '364', '809', '810', '961']
 
+# Global connection pool
+db_pool = None
+_user_cache: dict[int, tuple[float, dict | None]] = {}
+USER_CACHE_TTL_SECONDS = 60
+
+
+def _invalidate_user_cache(telegram_id: int):
+    _user_cache.pop(telegram_id, None)
+
+
+def format_datetime(value) -> str:
+    """Format PostgreSQL datetime values and legacy text timestamps consistently."""
+    if not value:
+        return '—'
+    if hasattr(value, 'strftime'):
+        return value.strftime('%Y-%m-%d %H:%M')
+    return str(value)[:16].replace('T', ' ')
+
+async def _check_connection(conn):
+    """Pool health check — dead connections are replaced automatically."""
+    try:
+        await conn.execute("SELECT 1")
+    except Exception:
+        raise
+
 async def init_db():
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
-        print("Connected to Neon DB successfully")
+    global db_pool
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise RuntimeError("DATABASE_URL is not configured")
+    db_pool = AsyncConnectionPool(
+        db_url,
+        kwargs={"row_factory": dict_row},
+        min_size=1,
+        max_size=10,
+        max_idle=300,           # 5 daqiqadan keyin idle ulanishni yop
+        max_lifetime=3600,      # 1 soatdan keyin ulanishni yangilash
+        reconnect_timeout=30,   # qayta ulanishga 30s vaqt
+        check=_check_connection,
+        open=False,
+    )
+    await db_pool.open(wait=True, timeout=30)
+    # Vehicle metadata is kept in PostgreSQL so newly imported drivers/models persist.
+    async with db_pool.connection() as db:
+        await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_name TEXT")
+        await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_model TEXT")
+        await db.commit()
+    print("Connected to Neon DB successfully with connection pool")
+
+
+async def close_db():
+    """Close the shared database pool during application shutdown."""
+    global db_pool
+    if db_pool is not None:
+        await db_pool.close()
+        db_pool = None
+
+
+async def get_vehicle_counts() -> dict:
+    """SoZ va nosoz mashinalar sonini qaytaradi (kesh uchun)."""
+    global db_pool
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                "SELECT status, COUNT(*) as cnt FROM vehicles GROUP BY status"
+            )
+            rows = await cursor.fetchall()
+            result = {'soz': 0, 'nosoz': 0, 'total': 0}
+            for row in rows:
+                if row['status'] == 'soz':
+                    result['soz'] = row['cnt']
+                elif row['status'] == 'nosoz':
+                    result['nosoz'] = row['cnt']
+                result['total'] += row['cnt']
+            return result
 
 
 async def add_user(telegram_id: int, full_name: str, phone: str, role: str):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         now = datetime.datetime.now().isoformat()
         cursor = await db.execute('SELECT COUNT(*) FROM users')
         row = await cursor.fetchone()
-        count = row[0] if row else 0
+        count = row['count'] if row else 0
         from config import ADMIN_ID
         is_approved = 0
         final_role = role
@@ -27,61 +103,112 @@ async def add_user(telegram_id: int, full_name: str, phone: str, role: str):
             is_approved = 1
         await db.execute('\n            INSERT INTO users (telegram_id, full_name, phone, role, is_approved, created_at)\n            VALUES (%s, %s, %s, %s, %s, %s)\n            ON CONFLICT(telegram_id) DO UPDATE SET\n                full_name = excluded.full_name,\n                phone = excluded.phone,\n                role = excluded.role,\n                is_approved = excluded.is_approved\n        ', (telegram_id, full_name, phone, final_role, is_approved, now))
         await db.commit()
+        _invalidate_user_cache(telegram_id)
         return (final_role, is_approved)
 
 async def get_user(telegram_id: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    cached = _user_cache.get(telegram_id)
+    now = time.monotonic()
+    if cached and now - cached[0] < USER_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    global db_pool
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT * FROM users WHERE telegram_id = %s', (telegram_id,))
-            return await cursor.fetchone()
+            user = await cursor.fetchone()
+            _user_cache[telegram_id] = (now, user)
+            return user
 
 async def get_pending_users():
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT * FROM users WHERE is_approved = 0')
             return await cursor.fetchall()
 
 async def approve_user(telegram_id: int, role: str=None):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         if role:
             await db.execute('UPDATE users SET is_approved = 1, role = %s WHERE telegram_id = %s', (role, telegram_id))
         else:
             await db.execute('UPDATE users SET is_approved = 1 WHERE telegram_id = %s', (telegram_id,))
         await db.commit()
+        _invalidate_user_cache(telegram_id)
 
 async def reject_user(telegram_id: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         await db.execute('DELETE FROM users WHERE telegram_id = %s', (telegram_id,))
         await db.commit()
+        _invalidate_user_cache(telegram_id)
+
+async def delete_user(telegram_id: int):
+    """Permanently remove an employee account from the bot."""
+    global db_pool
+    async with db_pool.connection() as db:
+        await db.execute('DELETE FROM users WHERE telegram_id = %s', (telegram_id,))
+        await db.commit()
+        _invalidate_user_cache(telegram_id)
 
 async def update_user_role(telegram_id: int, role: str):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         await db.execute('UPDATE users SET role = %s WHERE telegram_id = %s', (role, telegram_id))
         await db.commit()
+        _invalidate_user_cache(telegram_id)
 
 async def get_users_by_role(role: str):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT * FROM users WHERE role = %s AND is_approved = 1', (role,))
             return await cursor.fetchall()
 
+
+async def get_approved_users():
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                'SELECT * FROM users WHERE is_approved = 1 ORDER BY full_name'
+            )
+            return await cursor.fetchall()
+
+
+async def search_users(query: str):
+    pattern = f'%{query}%'
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT * FROM users
+                   WHERE full_name ILIKE %s OR phone ILIKE %s
+                   ORDER BY full_name LIMIT 10''',
+                (pattern, pattern),
+            )
+            return await cursor.fetchall()
+
 async def create_request(created_by: int, description: str, vehicle_name: str=None, old_part_photo: str=None, qty_used: int=None, qty_left: int=None, request_type: str='repair'):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         now = datetime.datetime.now().isoformat()
-        cursor = await db.execute("\n            INSERT INTO requests (created_by, description, status, created_at, updated_at, vehicle_name, old_part_photo, quantity_used, quantity_left, request_type)\n            VALUES (%s, %s, 'pending_approval', %s, %s, %s, %s, %s, %s, %s)\n        ", (created_by, description, now, now, vehicle_name, old_part_photo, qty_used, qty_left, request_type))
+        cursor = await db.execute("\n            INSERT INTO requests (created_by, description, status, created_at, updated_at, vehicle_name, old_part_photo, quantity_used, quantity_left, request_type)\n            VALUES (%s, %s, 'pending_approval', %s, %s, %s, %s, %s, %s, %s)\n            RETURNING id\n        ", (created_by, description, now, now, vehicle_name, old_part_photo, qty_used, qty_left, request_type))
+        row = await cursor.fetchone()
         await db.commit()
-        return cursor.lastrowid
+        return row['id']
 
 async def get_request(request_id: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('\n            SELECT r.*, \n                   u.full_name as creator_name, u.phone as creator_phone,\n                   app.full_name as approver_name,\n                   wh.full_name as warehouseman_name,\n                   cour.full_name as courier_name\n            FROM requests r\n            LEFT JOIN users u ON r.created_by = u.telegram_id\n            LEFT JOIN users app ON r.approved_by = app.telegram_id\n            LEFT JOIN users wh ON r.warehouse_released_by = wh.telegram_id\n            LEFT JOIN users cour ON r.courier_id = cour.telegram_id\n            WHERE r.id = %s\n        ', (request_id,))
             return await cursor.fetchone()
 
 async def update_request_status(request_id: int, status: str, updated_by_id: int, role: str):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         now = datetime.datetime.now().isoformat()
-        if role in ['manager', 'super_admin']:
+        if role in ['manager', 'super_admin', 'observer']:
             if status in ['approved', 'pending_admin_approval']:
                 await db.execute('\n                    UPDATE requests SET status = %s, approved_by = %s, updated_at = %s WHERE id = %s\n                ', (status, updated_by_id, now, request_id))
             else:
@@ -95,41 +222,51 @@ async def update_request_status(request_id: int, status: str, updated_by_id: int
         await db.commit()
 
 async def update_installed_part_photo(request_id: int, photo_id: str):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         now = datetime.datetime.now().isoformat()
         await db.execute('\n            UPDATE requests SET installed_part_photo = %s, updated_at = %s WHERE id = %s\n        ', (photo_id, now, request_id))
         await db.commit()
 
 async def get_broken_vehicles():
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute("SELECT name FROM vehicles WHERE status = 'nosoz'")
             rows = await cursor.fetchall()
-            return [r[0] for r in rows]
+            return [r['name'] for r in rows]
 
 async def get_healthy_vehicles():
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute("SELECT name FROM vehicles WHERE status = 'soz'")
             rows = await cursor.fetchall()
-            return [r[0] for r in rows]
+            return [r['name'] for r in rows]
 
 async def get_all_vehicles():
-    return PREDEFINED_VEHICLES
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute("SELECT name FROM vehicles ORDER BY name")
+            rows = await cursor.fetchall()
+            return [row['name'] for row in rows]
 
 async def update_vehicle_status(name: str, status: str, reason: str=None):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         await db.execute('UPDATE vehicles SET status = %s, reason = %s WHERE name = %s', (status, reason, name.strip()))
         await db.commit()
 
 async def check_vehicle_active_requests(name: str) -> bool:
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute("\n            SELECT COUNT(*) FROM requests \n            WHERE vehicle_name = %s AND status NOT IN ('completed', 'rejected')\n        ", (name.strip(),))
             row = await cursor.fetchone()
-            return row[0] > 0 if row else False
+            return row['count'] > 0 if row else False
 
 async def update_request_installation_details(request_id: int, photo_id: str, items_used_map: dict=None):
+    global db_pool
     req = await get_request(request_id)
     creator_id = req['created_by'] if req else None
     now = datetime.datetime.now().isoformat()
@@ -139,83 +276,406 @@ async def update_request_installation_details(request_id: int, photo_id: str, it
     total_qty_used = sum((int(v) for v in items_used_map.values()))
     total_qty_requested = sum((item['quantity_requested'] for item in items))
     total_qty_left = total_qty_requested - total_qty_used
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         await db.execute('\n            UPDATE requests \n            SET installed_part_photo = %s, quantity_used = %s, quantity_left = %s, updated_at = %s \n            WHERE id = %s\n        ', (photo_id, total_qty_used, total_qty_left, now, request_id))
         await db.commit()
-    for item in items:
-        used_qty = int(items_used_map.get(str(item['id']), item['quantity_requested']))
-        if used_qty > 0:
-            await add_or_update_inventory_item(item['item_name'], -used_qty)
-            async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
-                await db.execute("\n                    INSERT INTO stock_transactions (item_name, type, quantity, user_id, request_id, created_at)\n                    VALUES (%s, 'rasxod', %s, %s, %s, %s)\n                ", (item['item_name'], used_qty, creator_id, request_id, now))
-                await db.commit()
+    # New workflow records rasxod when the mechanic receives parts from warehouse.
+    # Keep this fallback only for historical requests completed before that handover.
+    if req and req['status'] != 'issued_to_mechanic':
+        for item in items:
+            used_qty = int(items_used_map.get(str(item['id']), item['quantity_requested']))
+            if used_qty > 0:
+                await add_or_update_inventory_item(item['item_name'], -used_qty)
+                async with db_pool.connection() as db:
+                    await db.execute("\n                        INSERT INTO stock_transactions (item_name, type, quantity, user_id, request_id, created_at)\n                        VALUES (%s, 'rasxod', %s, %s, %s, %s)\n                    ", (item['item_name'], used_qty, creator_id, request_id, now))
+                    await db.commit()
 
 async def update_request_details(request_id: int, description: str, vehicle_name: str, old_part_photo: str, qty_used: int=None, qty_left: int=None, request_type: str='repair'):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    global db_pool
+    async with db_pool.connection() as db:
         now = datetime.datetime.now().isoformat()
         await db.execute("\n            UPDATE requests \n            SET description = %s, vehicle_name = %s, old_part_photo = %s, quantity_used = %s, quantity_left = %s, request_type = %s, status = 'pending_approval', updated_at = %s\n            WHERE id = %s\n        ", (description, vehicle_name, old_part_photo, qty_used, qty_left, request_type, now, request_id))
         await db.commit()
 
 async def update_request_item(request_id: int, item_name: str, quantity: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         await db.execute('\n            UPDATE request_items \n            SET item_name = %s, quantity_requested = %s, quantity_missing = %s, quantity_available = 0\n            WHERE request_id = %s\n        ', (item_name, quantity, quantity, request_id))
         await db.commit()
 
 async def get_requests_by_status(status: str):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('\n            SELECT r.*, u.full_name as creator_name \n            FROM requests r \n            JOIN users u ON r.created_by = u.telegram_id \n            WHERE r.status = %s\n            ORDER BY r.id ASC\n        ', (status,))
             return await cursor.fetchall()
 
 async def get_all_requests():
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('\n            SELECT r.*, u.full_name as creator_name \n            FROM requests r \n            JOIN users u ON r.created_by = u.telegram_id \n            ORDER BY r.id ASC\n        ')
             return await cursor.fetchall()
 
 async def get_requests_movement():
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute('\n            SELECT * FROM (\n                SELECT r.*, \n                       u_creator.full_name as creator_name,\n                       u_approver.full_name as approver_name,\n                       u_wh.full_name as warehouseman_name,\n                       u_courier.full_name as courier_name\n                FROM requests r\n                LEFT JOIN users u_creator ON r.created_by = u_creator.telegram_id\n                LEFT JOIN users u_approver ON r.approved_by = u_approver.telegram_id\n                LEFT JOIN users u_wh ON r.warehouse_released_by = u_wh.telegram_id\n                LEFT JOIN users u_courier ON r.courier_id = u_courier.telegram_id\n                ORDER BY r.id DESC\n                LIMIT 15\n            ) ORDER BY id ASC\n        ')
+            await cursor.execute('\n            SELECT * FROM (\n                SELECT r.*, \n                       u_creator.full_name as creator_name,\n                       u_approver.full_name as approver_name,\n                       u_wh.full_name as warehouseman_name,\n                       u_courier.full_name as courier_name\n                FROM requests r\n                LEFT JOIN users u_creator ON r.created_by = u_creator.telegram_id\n                LEFT JOIN users u_approver ON r.approved_by = u_approver.telegram_id\n                LEFT JOIN users u_wh ON r.warehouse_released_by = u_wh.telegram_id\n                LEFT JOIN users u_courier ON r.courier_id = u_courier.telegram_id\n                ORDER BY r.updated_at DESC\n                LIMIT 15\n            ) ORDER BY updated_at DESC\n        ')
             return await cursor.fetchall()
 
 async def get_my_requests(telegram_id: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute("\n            SELECT * FROM requests \n            WHERE created_by = %s AND status NOT IN ('completed', 'rejected')\n            ORDER BY id ASC\n        ", (telegram_id,))
             return await cursor.fetchall()
 
 async def get_inventory_item(name: str):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT * FROM inventory WHERE name = %s', (name.strip(),))
             return await cursor.fetchone()
 
 async def get_all_inventory():
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT * FROM inventory ORDER BY name')
             return await cursor.fetchall()
 
+
+async def get_open_requests(limit: int = 30):
+    """Return every request that still requires work or monitoring."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                """SELECT r.*, u.full_name AS creator_name
+                   FROM requests r
+                   LEFT JOIN users u ON u.telegram_id = r.created_by
+                   WHERE r.status NOT IN ('completed', 'rejected')
+                   ORDER BY r.updated_at DESC
+                   LIMIT %s""",
+                (limit,),
+            )
+            return await cursor.fetchall()
+
+
+async def get_completed_requests(limit: int = 30):
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                """SELECT r.*, u.full_name AS creator_name
+                   FROM requests r
+                   LEFT JOIN users u ON u.telegram_id = r.created_by
+                   WHERE r.status = 'completed'
+                   ORDER BY r.updated_at DESC
+                   LIMIT %s""",
+                (limit,),
+            )
+            return await cursor.fetchall()
+
+
+async def get_my_completed_requests(telegram_id: int, limit: int = 30):
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                """SELECT * FROM requests
+                   WHERE created_by = %s AND status = 'completed'
+                   ORDER BY updated_at DESC
+                   LIMIT %s""",
+                (telegram_id, limit),
+            )
+            return await cursor.fetchall()
+
+
+async def get_user_request_counts(telegram_id: int):
+    """Counts used as live badges in mechanic/brigadier menus."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                """SELECT
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE status NOT IN ('completed', 'rejected')) AS unfinished,
+                     COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                     COUNT(*) FILTER (WHERE status = 'ready_for_installation') AS ready_for_pickup
+                   FROM requests WHERE created_by = %s""",
+                (telegram_id,),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else {'total': 0, 'unfinished': 0, 'completed': 0}
+
+
+async def get_leadership_menu_counts():
+    """Live count badges for Super Admin, Manager and Manager 2 menus."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute("SELECT COUNT(*) AS count FROM users WHERE is_approved = 0")
+            pending_users = (await cursor.fetchone())['count']
+            await cursor.execute("SELECT COUNT(*) AS count FROM users WHERE is_approved = 1")
+            approved_users = (await cursor.fetchone())['count']
+            await cursor.execute("SELECT COUNT(*) AS count FROM requests WHERE status IN ('pending_approval', 'pending_admin_approval')")
+            pending_requests = (await cursor.fetchone())['count']
+            await cursor.execute("SELECT COUNT(*) AS count FROM requests WHERE status NOT IN ('completed', 'rejected')")
+            open_requests = (await cursor.fetchone())['count']
+            await cursor.execute("SELECT COUNT(*) AS count FROM requests WHERE status = 'completed'")
+            completed_requests = (await cursor.fetchone())['count']
+            await cursor.execute("SELECT COUNT(*) AS count FROM requests")
+            all_requests = (await cursor.fetchone())['count']
+            await cursor.execute("SELECT COUNT(*) AS count FROM inventory")
+            inventory_items = (await cursor.fetchone())['count']
+            return {
+                'pending_users': pending_users,
+                'approved_users': approved_users,
+                'pending_requests': pending_requests,
+                'open_requests': open_requests,
+                'completed_requests': completed_requests,
+                'all_requests': all_requests,
+                'inventory_items': inventory_items,
+            }
+
+async def get_all_my_requests(telegram_id: int):
+    """Return all requests created by an employee, including completed history."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                "SELECT * FROM requests WHERE created_by = %s ORDER BY id DESC",
+                (telegram_id,),
+            )
+            return await cursor.fetchall()
+
+
+async def get_requests_ready_for_pickup(telegram_id: int):
+    """Requests whose purchased parts are in the warehouse and await their creator."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                """SELECT * FROM requests
+                   WHERE created_by = %s
+                     AND status = 'ready_for_installation'
+                     AND courier_id IS NOT NULL
+                     AND warehouse_released_by IS NOT NULL
+                   ORDER BY updated_at ASC""",
+                (telegram_id,),
+            )
+            return await cursor.fetchall()
+
+
+async def issue_request_to_creator(request_id: int, creator_id: int):
+    """Issue request items from warehouse and register the rasxod transaction."""
+    now = datetime.datetime.now().isoformat()
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                "SELECT id, created_by, status FROM requests WHERE id = %s FOR UPDATE",
+                (request_id,),
+            )
+            request_row = await cursor.fetchone()
+            if not request_row or request_row['created_by'] != creator_id:
+                raise ValueError("Zayavka topilmadi yoki sizga tegishli emas.")
+            if request_row['status'] != 'ready_for_installation':
+                raise ValueError("Bu zayavka skladdan olish holatida emas yoki allaqachon olingan.")
+
+            await cursor.execute(
+                "SELECT item_name, quantity_requested FROM request_items WHERE request_id = %s",
+                (request_id,),
+            )
+            items = await cursor.fetchall()
+            if not items:
+                raise ValueError("Zayavka mahsulotlari topilmadi.")
+
+            # Validate all locked stock rows before subtracting anything.
+            for item in items:
+                await cursor.execute("SELECT quantity FROM inventory WHERE name = %s FOR UPDATE", (item['item_name'],))
+                stock_row = await cursor.fetchone()
+                if not stock_row or stock_row['quantity'] < item['quantity_requested']:
+                    available = stock_row['quantity'] if stock_row else 0
+                    raise ValueError(f"{item['item_name']} omborda yetarli emas (mavjud: {available}).")
+
+            for item in items:
+                quantity = item['quantity_requested']
+                await cursor.execute(
+                    "UPDATE inventory SET quantity = quantity - %s WHERE name = %s",
+                    (quantity, item['item_name']),
+                )
+                await cursor.execute(
+                    """INSERT INTO stock_transactions
+                       (item_name, type, quantity, user_id, request_id, created_at)
+                       VALUES (%s, 'rasxod', %s, %s, %s, %s)""",
+                    (item['item_name'], quantity, creator_id, request_id, now),
+                )
+
+            await cursor.execute(
+                "UPDATE requests SET status = 'issued_to_mechanic', updated_at = %s WHERE id = %s",
+                (now, request_id),
+            )
+        await db.commit()
+
+
+async def upsert_vehicle_metadata(name: str, driver_name: str, vehicle_model: str):
+    """Create/update vehicle owner metadata without changing its current status."""
+    async with db_pool.connection() as db:
+        await db.execute(
+            """INSERT INTO vehicles (name, status, reason, driver_name, vehicle_model)
+               VALUES (%s, 'soz', NULL, %s, %s)
+               ON CONFLICT (name) DO UPDATE SET
+                   driver_name = EXCLUDED.driver_name,
+                   vehicle_model = EXCLUDED.vehicle_model""",
+            (name.strip(), driver_name.strip(), vehicle_model.strip()),
+        )
+        await db.commit()
+
+
+async def analyze_inventory_with_gemini(stock: list[dict]) -> dict:
+    """Produce a short Uzbek inventory audit for the Excel AI sheet."""
+    import aiohttp
+    import json
+
+    api_key = os.environ.get('GEMINI_API_KEY')
+    if not api_key:
+        return {'error': 'GEMINI_API_KEY sozlanmagan.'}
+
+    inventory_text = '\n'.join(
+        f"- {item['name']}: {item['quantity']} dona ({item.get('category', 'butlovchi')})"
+        for item in stock
+    )
+    prompt = f'''Siz MO butlash ombori uchun tahlilchisiz.
+Quyidagi ombor qoldiqlarini tahlil qiling. Javobni faqat JSON formatida, o'zbek lotin tilida bering:
+{{"summary":"qisqa xulosa", "risks":["..."], "recommendations":["..."]}}
+Miqdori 10 yoki undan kam mahsulotlarga alohida e'tibor bering. Sonlarni o'zgartirmang.
+
+OMBOR:
+{inventory_text}'''
+    payload = {
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'responseMimeType': 'application/json'},
+    }
+    url = (
+        'https://generativelanguage.googleapis.com/v1beta/models/'
+        f'gemini-1.5-flash:generateContent?key={api_key}'
+    )
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload) as response:
+                if response.status != 200:
+                    return {'error': f'Gemini API xatosi: {response.status}'}
+                result = await response.json()
+        text = result['candidates'][0]['content']['parts'][0]['text']
+        analysis = json.loads(text)
+        if isinstance(analysis, dict):
+            return analysis
+    except Exception as error:
+        return {'error': f'Gemini tahlili olinmadi: {error}'}
+    return {'error': 'Gemini tahlil formatini qaytara olmadi.'}
+
+
+async def export_inventory_to_excel():
+    """Create a compact, shareable Excel snapshot of the current inventory."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    stock = await get_all_inventory()
+    ai_analysis = await analyze_inventory_with_gemini(stock)
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = 'Ombor qoldiqlari'
+    worksheet.sheet_view.showGridLines = False
+
+    worksheet.merge_cells('A1:D1')
+    worksheet['A1'] = 'MO BUTLASH — OMBOR QOLDIQLARI'
+    worksheet['A1'].font = Font(name='Calibri', size=14, bold=True, color='FFFFFF')
+    worksheet['A1'].fill = PatternFill('solid', fgColor='1F4E79')
+    worksheet['A1'].alignment = Alignment(horizontal='center')
+    worksheet.row_dimensions[1].height = 26
+
+    headers = ['T/r', 'Toifa', 'Mahsulot nomi', 'Miqdori (dona)']
+    widths = [8, 24, 42, 20]
+    border_side = Side(style='thin', color='B4C6E7')
+    border = Border(left=border_side, right=border_side, top=border_side, bottom=border_side)
+    for column, (header, width) in enumerate(zip(headers, widths), start=1):
+        cell = worksheet.cell(row=2, column=column, value=header)
+        cell.font = Font(name='Calibri', bold=True, color='FFFFFF')
+        cell.fill = PatternFill('solid', fgColor='4472C4')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = border
+        worksheet.column_dimensions[cell.column_letter].width = width
+
+    for index, item in enumerate(stock, start=1):
+        category = 'Tayyor mahsulot' if item.get('category') == 'tayyor' else 'Butlovchi mahsulot'
+        values = [index, category, item['name'], item['quantity']]
+        for column, value in enumerate(values, start=1):
+            cell = worksheet.cell(row=index + 2, column=column, value=value)
+            cell.font = Font(name='Calibri', size=10)
+            cell.alignment = Alignment(
+                horizontal='center' if column in (1, 4) else 'left',
+                vertical='center',
+                wrap_text=True,
+            )
+            cell.border = border
+            if index % 2 == 0:
+                cell.fill = PatternFill('solid', fgColor='EAF2F8')
+
+    worksheet.freeze_panes = 'A3'
+    worksheet.auto_filter.ref = f'A2:D{max(2, len(stock) + 2)}'
+
+    ai_sheet = workbook.create_sheet('AI tahlil')
+    ai_sheet.sheet_view.showGridLines = False
+    ai_sheet.merge_cells('A1:B1')
+    ai_sheet['A1'] = 'GEMINI AI — OMBOR TAHLILI'
+    ai_sheet['A1'].font = Font(name='Calibri', size=14, bold=True, color='FFFFFF')
+    ai_sheet['A1'].fill = PatternFill('solid', fgColor='7030A0')
+    ai_sheet['A1'].alignment = Alignment(horizontal='center')
+    ai_sheet.column_dimensions['A'].width = 22
+    ai_sheet.column_dimensions['B'].width = 95
+
+    def add_analysis_row(row: int, label: str, value: str, color: str = 'FFFFFF'):
+        label_cell = ai_sheet.cell(row=row, column=1, value=label)
+        value_cell = ai_sheet.cell(row=row, column=2, value=value)
+        for cell in (label_cell, value_cell):
+            cell.font = Font(name='Calibri', size=10, bold=cell.column == 1)
+            cell.fill = PatternFill('solid', fgColor=color)
+            cell.alignment = Alignment(vertical='top', wrap_text=True)
+            cell.border = border
+
+    if ai_analysis.get('error'):
+        add_analysis_row(3, 'Holat', ai_analysis['error'], 'FCE4D6')
+    else:
+        add_analysis_row(3, 'Qisqa xulosa', ai_analysis.get('summary', 'Tahlil mavjud emas.'))
+        risks = ai_analysis.get('risks', [])
+        recommendations = ai_analysis.get('recommendations', [])
+        add_analysis_row(5, 'Xavflar', '\n'.join(f'• {risk}' for risk in risks) or 'Aniq xavf topilmadi.', 'FFF2CC')
+        add_analysis_row(7, 'Tavsiyalar', '\n'.join(f'• {item}' for item in recommendations) or 'Tavsiya mavjud emas.', 'E2F0D9')
+    for row in range(3, 9):
+        ai_sheet.row_dimensions[row].height = 42
+
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')
+    file_path = f'MO_Ombor_Qoldiqlari_{timestamp}.xlsx'
+    workbook.save(file_path)
+    return file_path
+
 async def add_or_update_inventory_item(name: str, quantity_change: int, category: str='butlovchi'):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         name_clean = name.strip()
         cursor = await db.execute('SELECT quantity FROM inventory WHERE name = %s', (name_clean,))
         row = await cursor.fetchone()
         if row:
-            new_qty = max(0, row[0] + quantity_change)
+            new_qty = max(0, row['quantity'] + quantity_change)
             await db.execute('UPDATE inventory SET quantity = %s WHERE name = %s', (new_qty, name_clean))
         else:
             await db.execute('INSERT INTO inventory (name, quantity, category) VALUES (%s, %s, %s)', (name_clean, max(0, quantity_change), category))
         await db.commit()
 
 async def update_inventory_manually(name: str, new_qty: int, category: str, user_id: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         name_clean = name.strip()
         cursor = await db.execute('SELECT quantity FROM inventory WHERE name = %s', (name_clean,))
         row = await cursor.fetchone()
-        old_qty = row[0] if row else 0
-        await db.execute('\n            INSERT INTO inventory (name, quantity, category) VALUES (%s, %s, %s)\n            ON CONFLICT(name) DO UPDATE SET quantity = excluded.quantity, category = excluded.category\n        ', (name_clean, new_qty, category))
+        old_qty = row['quantity'] if row else 0
+        if row:
+            await db.execute(
+                'UPDATE inventory SET quantity = %s, category = %s WHERE name = %s',
+                (new_qty, category, name_clean),
+            )
+        else:
+            await db.execute(
+                'INSERT INTO inventory (name, quantity, category) VALUES (%s, %s, %s)',
+                (name_clean, new_qty, category),
+            )
         diff = new_qty - old_qty
         if diff != 0:
             tx_type = 'prixod' if diff > 0 else 'rasxod'
@@ -224,14 +684,182 @@ async def update_inventory_manually(name: str, new_qty: int, category: str, user
         await db.commit()
 
 async def add_request_item(request_id: int, item_name: str, quantity_requested: int, quantity_available: int, quantity_missing: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         await db.execute('\n            INSERT INTO request_items (request_id, item_name, quantity_requested, quantity_available, quantity_missing)\n            VALUES (%s, %s, %s, %s, %s)\n        ', (request_id, item_name.strip(), quantity_requested, quantity_available, quantity_missing))
         await db.commit()
 
 async def get_request_items(request_id: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT * FROM request_items WHERE request_id = %s', (request_id,))
+            return await cursor.fetchall()
+
+
+async def delete_request_items(request_id: int):
+    async with db_pool.connection() as db:
+        await db.execute('DELETE FROM request_items WHERE request_id = %s', (request_id,))
+        await db.commit()
+
+
+async def get_vehicle_overview(vehicle_name: str):
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT r.*, u.full_name AS creator_name
+                   FROM requests r
+                   JOIN users u ON r.created_by = u.telegram_id
+                   WHERE r.vehicle_name = %s
+                     AND r.status NOT IN ('completed', 'rejected')
+                   ORDER BY r.id DESC''',
+                (vehicle_name,),
+            )
+            active_requests = await cursor.fetchall()
+            await cursor.execute(
+                '''SELECT r.*, u.full_name AS creator_name
+                   FROM requests r
+                   JOIN users u ON r.created_by = u.telegram_id
+                   WHERE r.vehicle_name = %s
+                     AND r.status IN ('completed', 'rejected')
+                   ORDER BY r.id DESC LIMIT 5''',
+                (vehicle_name,),
+            )
+            history_requests = await cursor.fetchall()
+            await cursor.execute(
+                'SELECT status, reason, driver_name, vehicle_model FROM vehicles WHERE name = %s',
+                (vehicle_name,),
+            )
+            vehicle = await cursor.fetchone()
+            return active_requests, history_requests, vehicle
+
+
+async def get_courier_missing_items(courier_id: int):
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT r.id AS request_id, r.vehicle_name, r.status,
+                          ri.item_name, ri.quantity_missing, r.courier_id,
+                          r.request_type, r.price
+                   FROM request_items ri
+                   JOIN requests r ON ri.request_id = r.id
+                   WHERE r.courier_id = %s
+                     AND r.status IN ('delivering', 'searching', 'purchased')
+                     AND ri.quantity_missing > 0
+                   ORDER BY r.id ASC''',
+                (courier_id,)
+            )
+            return await cursor.fetchall()
+
+
+async def get_courier_menu_counts(courier_id: int):
+    """Return the live counters shown on a supplier's main menu."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT
+                       COUNT(*) FILTER (WHERE status = 'approved' AND courier_id IS NULL) AS available,
+                       COUNT(*) FILTER (WHERE courier_id = %s
+                                          AND status IN ('delivering', 'searching', 'purchased')) AS active,
+                       COUNT(*) FILTER (WHERE courier_id = %s
+                                          AND status = 'waiting_receipt') AS awaiting_receipt,
+                       COUNT(*) FILTER (
+                           WHERE courier_id = %s
+                             AND status IN ('delivering', 'searching', 'purchased')
+                             AND EXISTS (
+                                 SELECT 1 FROM request_items ri
+                                 WHERE ri.request_id = requests.id
+                                   AND ri.quantity_missing > 0
+                             )
+                       ) AS searching_items
+                   FROM requests''',
+                (courier_id, courier_id, courier_id),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else {
+                'available': 0, 'active': 0, 'awaiting_receipt': 0, 'searching_items': 0
+            }
+
+
+async def claim_courier_request(request_id: int, courier_id: int) -> bool:
+    """Atomically assign a request so two suppliers cannot take it together."""
+    async with db_pool.connection() as db:
+        now = datetime.datetime.now().isoformat()
+        cursor = await db.execute(
+            '''UPDATE requests
+               SET status = 'delivering', courier_id = %s, updated_at = %s
+               WHERE id = %s AND status = 'approved' AND courier_id IS NULL
+               RETURNING id''',
+            (courier_id, now, request_id),
+        )
+        claimed = await cursor.fetchone()
+        await db.commit()
+        return claimed is not None
+
+
+async def courier_owns_active_request(request_id: int, courier_id: int) -> bool:
+    """Allow supplier actions only on that supplier's active request."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT 1 FROM requests
+                   WHERE id = %s AND courier_id = %s
+                     AND status IN ('delivering', 'searching', 'purchased')''',
+                (request_id, courier_id),
+            )
+            return await cursor.fetchone() is not None
+
+
+async def get_courier_day_summary(courier_id: int, day_pattern: str):
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT r.id, r.vehicle_name, r.price, r.updated_at,
+                          ri.item_name, ri.quantity_requested
+                   FROM requests r
+                   JOIN request_items ri ON ri.request_id = r.id
+                   WHERE r.courier_id = %s
+                     AND r.status IN ('waiting_receipt', 'ready_for_installation', 'completed')
+                     AND CAST(r.updated_at AS TEXT) LIKE %s
+                   ORDER BY r.updated_at ASC''',
+                (courier_id, day_pattern),
+            )
+            delivered_rows = await cursor.fetchall()
+            await cursor.execute(
+                '''SELECT COUNT(*) AS count FROM requests
+                   WHERE courier_id = %s
+                     AND status IN ('delivering', 'searching', 'purchased')''',
+                (courier_id,),
+            )
+            row = await cursor.fetchone()
+            return delivered_rows, row['count'] if row else 0
+
+
+async def get_courier_active_requests(courier_id: int):
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT r.*, u.full_name AS creator_name
+                   FROM requests r
+                   JOIN users u ON r.created_by = u.telegram_id
+                   WHERE r.courier_id = %s
+                     AND r.status IN ('delivering', 'searching', 'purchased')
+                   ORDER BY r.id ASC''',
+                (courier_id,),
+            )
+            return await cursor.fetchall()
+
+
+async def get_courier_waiting_receipts(courier_id: int):
+    """Requests already handed to the warehouse, awaiting warehouse confirmation."""
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                '''SELECT r.*, u.full_name AS creator_name
+                   FROM requests r
+                   JOIN users u ON r.created_by = u.telegram_id
+                   WHERE r.courier_id = %s AND r.status = 'waiting_receipt'
+                   ORDER BY r.updated_at ASC''',
+                (courier_id,),
+            )
             return await cursor.fetchall()
 
 async def update_stock_on_receipt(request_id: int):
@@ -242,7 +870,7 @@ async def update_stock_on_receipt(request_id: int):
     for item in items:
         if item['quantity_missing'] > 0:
             await add_or_update_inventory_item(item['item_name'], item['quantity_missing'])
-            async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+            async with db_pool.connection() as db:
                 await db.execute("\n                    INSERT INTO stock_transactions (item_name, type, quantity, user_id, request_id, created_at)\n                    VALUES (%s, 'prixod', %s, %s, %s, %s)\n                ", (item['item_name'], item['quantity_missing'], wh_id, request_id, now))
                 await db.commit()
 
@@ -277,7 +905,7 @@ async def export_requests_to_excel():
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side, GradientFill
     from openpyxl.utils import get_column_letter
     wb = openpyxl.Workbook()
-    STATUS_LABELS_UZ = {'pending_approval': 'Тасдиқлаш кутилмоқда', 'pending_admin_approval': 'Админ кутилмоқда', 'approved': 'Тасдиқланган', 'delivering': 'Йўлда', 'searching': 'Қидирилмоқда', 'purchased': 'Сотиб олинди', 'waiting_receipt': 'Қабул кутилмоқда', 'completed': 'Якунланди', 'rejected': 'Рад этилди', 'ready_for_installation': 'Ўрнатишга тайёр'}
+    STATUS_LABELS_UZ = {'pending_approval': 'Тасдиқлаш кутилмоқда', 'pending_admin_approval': 'Админ кутилмоқда', 'approved': 'Тасдиқланган', 'delivering': 'Йўлда', 'searching': 'Қидирилмоқда', 'purchased': 'Сотиб олинди', 'waiting_receipt': 'Қабул кутилмоқда', 'completed': 'Якунланди', 'rejected': 'Рад этилди', 'ready_for_installation': 'Ўрнатишга тайёр', 'issued_to_mechanic': 'Складдан олинди'}
     COLOR_HEADER_BG = '1F4E79'
     COLOR_HEADER_FONT = 'FFFFFF'
     COLOR_TITLE_BG = '2E75B6'
@@ -321,7 +949,7 @@ async def export_requests_to_excel():
         header_style(cell, hdr)
         ws1.column_dimensions[get_column_letter(col_idx)].width = width
     ws1.row_dimensions[2].height = 36
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('\n            SELECT r.id, creator.full_name as creator_name, r.description, r.created_at, r.status,\n                   manager.full_name as manager_name, courier.full_name as courier_name,\n                   warehouse.full_name as warehouseman_name,\n                   ri.item_name, ri.quantity_requested, ri.quantity_available, ri.quantity_missing,\n                   r.quantity_used, r.quantity_left\n            FROM requests r\n            LEFT JOIN users creator ON r.created_by = creator.telegram_id\n            LEFT JOIN users manager ON r.approved_by = manager.telegram_id\n            LEFT JOIN users courier ON r.courier_id = courier.telegram_id\n            LEFT JOIN users warehouse ON r.warehouse_released_by = warehouse.telegram_id\n            LEFT JOIN request_items ri ON r.id = ri.request_id\n            ORDER BY r.id ASC\n        ')
             rows = await cursor.fetchall()
@@ -366,7 +994,7 @@ async def export_requests_to_excel():
         end_row = current_row + num_items - 1
         for offset, r in enumerate(group):
             row_idx = current_row + offset
-            row_vals_item = [r['id'], r['creator_name'] or '—', r['description'] or '—', r['created_at'][:16].replace('T', ' ') if r['created_at'] else '—', STATUS_LABELS_UZ.get(r['status'], r['status'] or '—'), r['manager_name'] or '—', r['courier_name'] or '—', r['warehouseman_name'] or '—', r['item_name'] or '—', r['quantity_requested'] or 0, r['quantity_available'] or 0, r['quantity_missing'] or 0, r['quantity_used'] if r['quantity_used'] is not None else '—', r['quantity_left'] if r['quantity_left'] is not None else '—']
+            row_vals_item = [r['id'], r['creator_name'] or '—', r['description'] or '—', format_datetime(r['created_at']), STATUS_LABELS_UZ.get(r['status'], r['status'] or '—'), r['manager_name'] or '—', r['courier_name'] or '—', r['warehouseman_name'] or '—', r['item_name'] or '—', r['quantity_requested'] or 0, r['quantity_available'] or 0, r['quantity_missing'] or 0, r['quantity_used'] if r['quantity_used'] is not None else '—', r['quantity_left'] if r['quantity_left'] is not None else '—']
             status_key = r['status']
             for col_idx, val in enumerate(row_vals_item, start=1):
                 cell = ws1.cell(row=row_idx, column=col_idx, value=val)
@@ -407,7 +1035,7 @@ async def export_requests_to_excel():
         header_style(cell, hdr)
         ws2.column_dimensions[get_column_letter(col_idx)].width = width
     ws2.row_dimensions[2].height = 34
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT name, quantity, category FROM inventory ORDER BY name')
             inv_items = await cursor.fetchall()
@@ -475,7 +1103,7 @@ async def export_requests_to_excel():
         header_style(cell, hdr)
         ws3.column_dimensions[get_column_letter(col_idx)].width = width
     ws3.row_dimensions[2].height = 34
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'prixod'\n            ORDER BY t.id DESC\n        ")
             prixod_rows = await cursor.fetchall()
@@ -521,7 +1149,7 @@ async def export_requests_to_excel():
         req_cell.alignment = Alignment(horizontal='center', vertical='center')
         req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         req_cell.border = thin_border()
-        date_cell = ws3.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else '—')
+        date_cell = ws3.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
@@ -542,7 +1170,7 @@ async def export_requests_to_excel():
         header_style(cell, hdr)
         ws4.column_dimensions[get_column_letter(col_idx)].width = width
     ws4.row_dimensions[2].height = 34
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'rasxod'\n            ORDER BY t.id DESC\n        ")
             rasxod_rows = await cursor.fetchall()
@@ -588,7 +1216,7 @@ async def export_requests_to_excel():
         req_cell.alignment = Alignment(horizontal='center', vertical='center')
         req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         req_cell.border = thin_border()
-        date_cell = ws4.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else '—')
+        date_cell = ws4.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
@@ -640,7 +1268,7 @@ async def export_daily_report_to_excel():
         header_style(cell, hdr)
         ws1.column_dimensions[get_column_letter(col_idx)].width = width
     ws1.row_dimensions[2].height = 34
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT name, quantity, category FROM inventory ORDER BY name')
             inv_items = await cursor.fetchall()
@@ -708,9 +1336,9 @@ async def export_daily_report_to_excel():
         header_style(cell, hdr)
         ws2.column_dimensions[get_column_letter(col_idx)].width = width
     ws2.row_dimensions[2].height = 34
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'prixod' AND t.created_at LIKE %s\n            ORDER BY t.id DESC\n        ", (f'{today_str}%',))
+            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'prixod' AND CAST(t.created_at AS TEXT) LIKE %s\n            ORDER BY t.id DESC\n        ", (f'{today_str}%',))
             prixod_rows = await cursor.fetchall()
     processed_prixod_rows = []
     for tx in prixod_rows:
@@ -754,7 +1382,7 @@ async def export_daily_report_to_excel():
         req_cell.alignment = Alignment(horizontal='center', vertical='center')
         req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         req_cell.border = thin_border()
-        date_cell = ws2.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else '—')
+        date_cell = ws2.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
@@ -775,9 +1403,9 @@ async def export_daily_report_to_excel():
         header_style(cell, hdr)
         ws3.column_dimensions[get_column_letter(col_idx)].width = width
     ws3.row_dimensions[2].height = 34
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'rasxod' AND t.created_at LIKE %s\n            ORDER BY t.id DESC\n        ", (f'{today_str}%',))
+            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'rasxod' AND CAST(t.created_at AS TEXT) LIKE %s\n            ORDER BY t.id DESC\n        ", (f'{today_str}%',))
             rasxod_rows = await cursor.fetchall()
     processed_rasxod_rows = []
     for tx in rasxod_rows:
@@ -821,7 +1449,7 @@ async def export_daily_report_to_excel():
         req_cell.alignment = Alignment(horizontal='center', vertical='center')
         req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         req_cell.border = thin_border()
-        date_cell = ws3.cell(row=idx, column=6, value=r['created_at'][:16].replace('T', ' ') if r['created_at'] else '—')
+        date_cell = ws3.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
@@ -838,22 +1466,22 @@ async def split_request(original_request_id: int, missing_item_ids: list) -> int
     Original zayavkadagi topilmagan mahsulotlarni ajratib,
     yangi faol (approved) zayavka yaratadi.
     """
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         async with db.cursor() as cursor:
             await cursor.execute('SELECT * FROM requests WHERE id = %s', (original_request_id,))
             orig = await cursor.fetchone()
             if not orig:
                 raise ValueError('Original request not found')
         now = datetime.datetime.now().isoformat()
-        cursor = await db.execute("\n            INSERT INTO requests (\n                created_by, description, status, approved_by, \n                created_at, updated_at, vehicle_name, old_part_photo, request_type\n            )\n            VALUES (%s, %s, 'approved', %s, %s, %s, %s, %s, %s)\n        ", (orig['created_by'], orig['description'], orig['approved_by'], orig['created_at'], now, orig['vehicle_name'], orig['old_part_photo'], orig['request_type']))
-        new_request_id = cursor.lastrowid
+        cursor = await db.execute("\n            INSERT INTO requests (\n                created_by, description, status, approved_by, \n                created_at, updated_at, vehicle_name, old_part_photo, request_type\n            )\n            VALUES (%s, %s, 'approved', %s, %s, %s, %s, %s, %s)\n            RETURNING id\n        ", (orig['created_by'], orig['description'], orig['approved_by'], orig['created_at'], now, orig['vehicle_name'], orig['old_part_photo'], orig['request_type']))
+        new_request_id = (await cursor.fetchone())['id']
         for item_id in missing_item_ids:
             await db.execute('\n                UPDATE request_items \n                SET request_id = %s \n                WHERE id = %s AND request_id = %s\n            ', (new_request_id, item_id, original_request_id))
         await db.commit()
         return new_request_id
 
 async def update_request_price(request_id: int, price: int):
-    async with await psycopg.AsyncConnection.connect(os.environ.get('DATABASE_URL'), row_factory=dict_row) as db:
+    async with db_pool.connection() as db:
         now = datetime.datetime.now().isoformat()
         await db.execute('\n            UPDATE requests \n            SET price = %s, updated_at = %s\n            WHERE id = %s\n        ', (price, now, request_id))
         await db.commit()

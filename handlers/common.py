@@ -1,10 +1,14 @@
 from aiogram import Router, F
+from html import escape
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 import re
 import database as db
+
+# Kesh: mashina sonlari (DB ga har safar murojaat qilmaslik uchun)
+_vehicle_cache = {'soz': 0, 'nosoz': 0, 'total': 0}
 
 router = Router()
 
@@ -17,7 +21,7 @@ ROLE_LABELS = {
     'manager': 'Boshqaruvchi 💼',
     'observer': 'Boshqaruvchi 2 💼',
     'mechanic': 'Mexanik 🔧',
-    'brigadier': 'Brigadir BR 🚜',
+    'brigadier': 'Brigadir RB 🚜',
     'courier': "Ta'minotchi 🚚",
     'warehouseman': 'Skladchik 📦'
 }
@@ -41,6 +45,9 @@ def get_role_by_input(text: str) -> str:
         'mexanik': 'mechanic',
         'mechanic': 'mechanic',
         'brigadir': 'brigadier',
+        'brigadir rb': 'brigadier',
+        'brigadier rb': 'brigadier',
+        # Eski yozuv mosligi uchun saqlanadi; bot endi RB deb ko'rsatadi.
         'brigadir br': 'brigadier',
         'brigadier': 'brigadier',
         'yetkazib beruvchi': 'courier',
@@ -66,51 +73,88 @@ def get_role_keyboard():
         keyboard.append(row)
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
 
-def get_main_keyboard(role: str):
-    import sqlite3
-    from config import DB_PATH
+async def refresh_vehicle_cache():
+    """Mashina sonlarini DB dan yangilash (async, blokirovkasiz)"""
+    global _vehicle_cache
     try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM vehicles WHERE status = 'soz'")
-        soz_count = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM vehicles WHERE status = 'nosoz'")
-        nosoz_count = cur.fetchone()[0]
-        conn.close()
+        counts = await db.get_vehicle_counts()
+        _vehicle_cache['soz'] = counts.get('soz', 0)
+        _vehicle_cache['nosoz'] = counts.get('nosoz', 0)
+        _vehicle_cache['total'] = counts.get('total', 0)
     except Exception:
-        soz_count = 0
-        nosoz_count = 0
+        pass  # Kesh eski qiymatlarni saqlaydi
+
+def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None, vehicle_count: int = None, request_counts: dict = None, leadership_counts: dict = None, courier_counts: dict = None):
+    # Agar son berilmagan bo'lsa, keshdan olamiz (blokirovkasiz!)
+    if soz_count is None:
+        soz_count = _vehicle_cache.get('soz', 0)
+    if nosoz_count is None:
+        nosoz_count = _vehicle_cache.get('nosoz', 0)
+    if vehicle_count is None:
+        vehicle_count = _vehicle_cache.get('total', 0)
         
     soz_btn_text = f"Соз ҳолат 🟢 ({soz_count})"
     nosoz_btn_text = f"Носоз ҳолат 🔴 ({nosoz_count})"
+    vehicles_btn_text = f"Автомашиналар 🚗 ({vehicle_count})"
+    request_counts = request_counts or {}
+    leadership_counts = leadership_counts or {}
+    courier_counts = courier_counts or {}
+    membership_btn = f"Аъзолик сўровлари 👥 ({leadership_counts.get('pending_users', 0)})"
+    employees_btn = f"Ходимлар рўйхати 📋 ({leadership_counts.get('approved_users', 0)})"
+    pending_btn = f"Кутилаётган заявкалар 📥 ({leadership_counts.get('pending_requests', 0)})"
+    all_requests_btn = f"Барча заявкалар 📝 ({leadership_counts.get('all_requests', 0)})"
+    open_requests_btn = f"Тугалланмаган заявкалар ⏳ ({leadership_counts.get('open_requests', 0)})"
+    completed_requests_btn = f"Тугалланган заявкалар ✅ ({leadership_counts.get('completed_requests', 0)})"
+    movement_btn = f"Заявкалар ҳаракати 🔄 ({leadership_counts.get('all_requests', 0)})"
+    inventory_btn = f"Омбор қолдиқлари 📦 ({leadership_counts.get('inventory_items', 0)})"
 
     keyboard = []
     if role == 'super_admin':
         keyboard = [
-            [KeyboardButton(text="Аъзолик сўровлари 👥"), KeyboardButton(text="Ходимлар рўйхати 📋")],
-            [KeyboardButton(text="Кутилаётган заявкалар 📥"), KeyboardButton(text="Барча заявкалар 📝")],
-            [KeyboardButton(text="Заявкалар ҳаракати 🔄"), KeyboardButton(text="Омбор қолдиқлари 📦")],
+            [KeyboardButton(text=membership_btn), KeyboardButton(text=employees_btn)],
+            [KeyboardButton(text=pending_btn), KeyboardButton(text=all_requests_btn)],
+            [KeyboardButton(text=open_requests_btn), KeyboardButton(text=vehicles_btn_text)],
+            [KeyboardButton(text=completed_requests_btn)],
+            [KeyboardButton(text=movement_btn), KeyboardButton(text=inventory_btn)],
             [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
             [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
         ]
     elif role == 'manager':
         keyboard = [
-            [KeyboardButton(text="Кутилаётган заявкалар 📥")],
-            [KeyboardButton(text="Барча заявкалар 📝"), KeyboardButton(text="Ходимлар рўйхати 📋")],
-            [KeyboardButton(text="Заявкалар ҳаракати 🔄"), KeyboardButton(text="Омбор қолдиқлари 📦")],
+            [KeyboardButton(text=pending_btn)],
+            [KeyboardButton(text=all_requests_btn), KeyboardButton(text=employees_btn)],
+            [KeyboardButton(text=open_requests_btn), KeyboardButton(text=vehicles_btn_text)],
+            [KeyboardButton(text=completed_requests_btn)],
+            [KeyboardButton(text=movement_btn), KeyboardButton(text=inventory_btn)],
             [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
             [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
         ]
     elif role == 'observer':
         keyboard = [
-            [KeyboardButton(text="Барча заявкалар 📝"), KeyboardButton(text="Ходимлар рўйхати 📋")],
+            [KeyboardButton(text=f"Kutilayotgan zayavkalar 📥 ({leadership_counts.get('pending_requests', 0)})")],
+            [KeyboardButton(text=all_requests_btn), KeyboardButton(text=employees_btn)],
+            [KeyboardButton(text=open_requests_btn), KeyboardButton(text=vehicles_btn_text)],
+            [KeyboardButton(text=completed_requests_btn)],
+            [KeyboardButton(text=movement_btn), KeyboardButton(text=inventory_btn)],
             [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
             [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
         ]
     elif role in ['mechanic', 'brigadier']:
+        my_requests_btn = "Менинг заявкаларим 📂"
+        unfinished_btn = "Тугалланмаган заявкалар ⏳"
+        completed_btn = "Тугалланган заявкалар ✅"
+        if request_counts:
+            my_requests_btn += f" ({request_counts.get('total', 0)})"
+            unfinished_btn += f" ({request_counts.get('unfinished', 0)})"
+            completed_btn += f" ({request_counts.get('completed', 0)})"
+            pickup_btn = f"Складдан олиш 📦 ({request_counts.get('ready_for_pickup', 0)})"
+        else:
+            pickup_btn = "Складдан олиш 📦"
         keyboard = [
             [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)],
-            [KeyboardButton(text="Автолар 🚗"), KeyboardButton(text="Менинг заявкаларим 📂")]
+            [KeyboardButton(text=f"Автолар 🚗 ({vehicle_count})"), KeyboardButton(text=my_requests_btn)],
+            [KeyboardButton(text=unfinished_btn), KeyboardButton(text=pickup_btn)],
+            [KeyboardButton(text=completed_btn)]
         ]
     elif role == 'warehouseman':
         keyboard = [
@@ -119,6 +163,15 @@ def get_main_keyboard(role: str):
             [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")]
         ]
     elif role == 'courier':
+        if courier_counts:
+            return ReplyKeyboardMarkup(
+                keyboard=[
+                    [KeyboardButton(text=f"Yetkazilishi kutilayotganlar \U0001F69A ({courier_counts.get('available', 0)})"), KeyboardButton(text=f"Qidirilayotgan tovarlar \U0001F50E ({courier_counts.get('searching_items', 0)})")],
+                    [KeyboardButton(text=f"Aktiv yetkazuvlarim \U0001F6E3\uFE0F ({courier_counts.get('active', 0)})"), KeyboardButton(text=f"Sklad qabulini kutayotganlar \U0001F4E6 ({courier_counts.get('awaiting_receipt', 0)})")],
+                    [KeyboardButton(text="Kun yakuni \U0001F4CA")],
+                ],
+                resize_keyboard=True,
+            )
         keyboard = [
             [KeyboardButton(text="Етказилиши кутилаётганлар 🚚"), KeyboardButton(text="Қидирилаётган товарлар 🔎")],
             [KeyboardButton(text="Актив етказувларим 🛣️"), KeyboardButton(text="Кун якуни 📊")]
@@ -127,6 +180,27 @@ def get_main_keyboard(role: str):
     if not keyboard:
         return ReplyKeyboardRemove()
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+async def get_user_main_keyboard(telegram_id: int, role: str):
+    """Build a fresh role keyboard with current PostgreSQL counters."""
+    await refresh_vehicle_cache()
+    request_counts = None
+    leadership_counts = None
+    courier_counts = None
+    if role in ['mechanic', 'brigadier']:
+        request_counts = await db.get_user_request_counts(telegram_id)
+    elif role in ['super_admin', 'manager', 'observer']:
+        leadership_counts = await db.get_leadership_menu_counts()
+    elif role == 'courier':
+        courier_counts = await db.get_courier_menu_counts(telegram_id)
+    return get_main_keyboard(
+        role,
+        request_counts=request_counts,
+        leadership_counts=leadership_counts,
+        courier_counts=courier_counts,
+    )
+
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
@@ -157,11 +231,12 @@ async def cmd_start(message: Message, state: FSMContext):
     elif user['is_approved'] == 1:
         role_text = ROLE_LABELS.get(user['role'], user['role'])
         if user['role'] == 'super_admin':
-            role_text = "Super Admin 👑"
+            role_text = "Super Admin"
+        await refresh_vehicle_cache()  # Mashina sonlarini yangilash
         await message.answer(
             f"👋 Хуш келибсиз, {user['full_name']}!\n"
             f"🔑 Сизнинг ролингиз: {role_text}",
-            reply_markup=get_main_keyboard(user['role'])
+            reply_markup=await get_user_main_keyboard(telegram_id, user['role'])
         )
     else:
         await message.answer(
@@ -181,11 +256,13 @@ async def cmd_menu(message: Message, state: FSMContext):
         return
     role_text = ROLE_LABELS.get(user['role'], user['role'])
     if user['role'] == 'super_admin':
-        role_text = "Super Admin 👑"
+        role_text = "Super Admin"
+    await refresh_vehicle_cache()  # Mashina sonlarini yangilash
     await message.answer(
         f"🔄 Меню янгиланди!\n🔑 Ролингиз: {role_text}",
-        reply_markup=get_main_keyboard(user['role'])
+        reply_markup=await get_user_main_keyboard(message.from_user.id, user['role'])
     )
+
 
 
 @router.message(RegistrationStates.waiting_for_name)
@@ -309,11 +386,32 @@ async def download_daily_excel_report(message: Message):
     except Exception as e:
         await message.answer(f"Ҳисобот яратишда хатолик юз берди: {e}")
 
+def build_inventory_table(stock: list[dict]) -> list[str]:
+    """Return Telegram-safe, fixed-width inventory table chunks."""
+    lines = ["№   Toifa        Mahsulot                     Miqdor"]
+    for index, item in enumerate(stock, start=1):
+        category = 'Tayyor' if item.get('category') == 'tayyor' else 'Butlovchi'
+        name = str(item['name']).replace('\n', ' ')[:28]
+        lines.append(f"{index:<3} {category:<12} {name:<28} {item['quantity']:>5} dona")
+
+    chunks, current = [], []
+    for line in lines:
+        candidate = '\n'.join(current + [line])
+        if len(candidate) > 3300 and current:
+            chunks.append('<pre>' + escape('\n'.join(current)) + '</pre>')
+            current = [lines[0], line]
+        else:
+            current.append(line)
+    if current:
+        chunks.append('<pre>' + escape('\n'.join(current)) + '</pre>')
+    return chunks
+
+
 # Ombor qoldiqlari ro'yxatini ko'rish
-@router.message(F.text.in_(["Ombor qoldiqlari 📦", "Омбор қолдиқлари 📦"]))
+@router.message(F.text.in_(["Ombor qoldiqlari 📦", "Омбор қолдиқлари 📦"]) | F.text.startswith("Ombor qoldiqlari 📦") | F.text.startswith("Омбор қолдиқлари 📦"))
 async def show_warehouse_stock(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] not in ['super_admin', 'manager', 'warehouseman']:
+    if not user or user['role'] not in ['super_admin', 'manager', 'warehouseman', 'observer']:
         await message.answer("Сизда ушбу маълумотни кўриш ҳуқуқи йўқ.")
         return
         
@@ -322,6 +420,21 @@ async def show_warehouse_stock(message: Message):
         await message.answer("Омбор бўш. Ҳозирча ҳеч қандай маҳсулот мавжуд эмас.")
         return
         
+    await message.answer("📦 <b>OMBOR QOLDIQLARI</b>", parse_mode="HTML")
+    for table_chunk in build_inventory_table(stock):
+        await message.answer(table_chunk, parse_mode="HTML")
+
+    try:
+        from aiogram.types import FSInputFile
+        file_path = await db.export_inventory_to_excel()
+        await message.answer_document(
+            document=FSInputFile(file_path),
+            caption="📊 Ombor qoldiqlari — Excel jadvali",
+        )
+    except Exception as e:
+        await message.answer(f"Excel jadvalini yaratishda xatolik: {e}")
+    return
+
     tayyor_items = [i for i in stock if i.get('category') == 'tayyor']
     butlovchi_items = [i for i in stock if i.get('category') != 'tayyor']
     
@@ -397,6 +510,12 @@ def get_request_manage_keyboard(request_id: int):
 def get_mechanic_install_keyboard(request_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Ўрнатилди (Расм юбориш) 📸", callback_data=f"mech_install_{request_id}")]
+    ])
+
+
+def get_mechanic_pickup_keyboard(request_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Складдан oldim ✅", callback_data=f"mech_pickup_{request_id}")]
     ])
 
 # Mexanik uchun zayavkani qayta ishlash/tahrirlash tugmasi

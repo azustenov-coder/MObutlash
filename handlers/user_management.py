@@ -2,7 +2,6 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
-import aiosqlite
 import database as db
 from handlers.common import get_main_keyboard, ROLE_LABELS
 
@@ -20,7 +19,7 @@ async def is_super_admin_callback(callback: CallbackQuery) -> bool:
     user = await db.get_user(callback.from_user.id)
     return user is not None and user['role'] == 'super_admin'
 
-@router.message(F.text.in_(["Foydalanuvchilar ro'yxati 📋", "Ходимлар рўйхати 📋"]), is_super_admin)
+@router.message(F.text.in_(["Foydalanuvchilar ro'yxati 📋", "Ходимлар рўйхати 📋"]) | F.text.startswith("Foydalanuvchilar ro'yxati 📋") | F.text.startswith("Ходимлар рўйхати 📋"), is_super_admin)
 async def handle_user_mgmt_entry(message: Message, state: FSMContext):
     await state.clear()
     await show_usermgmt_main(message, state)
@@ -61,10 +60,7 @@ async def callback_usermgmt_close(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "usermgmt_list_approved", is_super_admin_callback)
 async def callback_list_approved(callback: CallbackQuery, state: FSMContext):
-    async with aiosqlite.connect(db.DB_PATH) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute("SELECT * FROM users WHERE is_approved = 1 ORDER BY full_name") as cursor:
-            users = await cursor.fetchall()
+    users = await db.get_approved_users()
             
     if not users:
         await callback.answer("Тасдиқланган ходимлар йўқ.", show_alert=True)
@@ -74,7 +70,7 @@ async def callback_list_approved(callback: CallbackQuery, state: FSMContext):
     
     keyboard = []
     for u in users:
-        role_label = "Super Admin 👑" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
+        role_label = "Super Admin" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
         keyboard.append([InlineKeyboardButton(text=f"👤 {u['full_name']} ({role_label})", callback_data=f"usermgmt_view_{u['telegram_id']}")])
         
     keyboard.append([InlineKeyboardButton(text="🔙 Орқага", callback_data="usermgmt_main")])
@@ -111,14 +107,7 @@ async def process_user_search(message: Message, state: FSMContext):
         await message.answer("Бошқариш панели ёпилди.", reply_markup=get_main_keyboard(user['role']))
         return
         
-    async with aiosqlite.connect(db.DB_PATH) as conn:
-        conn.row_factory = aiosqlite.Row
-        async with conn.execute("""
-            SELECT * FROM users 
-            WHERE full_name LIKE ? OR phone LIKE ? 
-            ORDER BY full_name LIMIT 10
-        """, (f"%{query}%", f"%{query}%")) as cursor:
-            results = await cursor.fetchall()
+    results = await db.search_users(query)
             
     if not results:
         await message.answer(
@@ -130,7 +119,7 @@ async def process_user_search(message: Message, state: FSMContext):
     text = f"🔍 **Қидирув натижалари ('{query}'):**\n\nБошқариш учун ходимни танланг:"
     keyboard = []
     for u in results:
-        role_label = "Super Admin 👑" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
+        role_label = "Super Admin" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
         status_prefix = "👤" if u['is_approved'] == 1 else "⏳"
         keyboard.append([InlineKeyboardButton(text=f"{status_prefix} {u['full_name']} ({role_label})", callback_data=f"usermgmt_view_{u['telegram_id']}")])
         
@@ -144,7 +133,7 @@ async def show_user_profile(callback: CallbackQuery, telegram_id: int, state: FS
         await callback.answer("Фойдаланувчи топилмади.", show_alert=True)
         return
         
-    role_label = "Super Admin 👑" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
+    role_label = "Super Admin" if u['role'] == 'super_admin' else ROLE_LABELS.get(u['role'], u['role'])
     status_text = "Тасдиқланган ✅" if u['is_approved'] == 1 else "Кутмоқда ⏳"
     
     text = (
@@ -154,11 +143,12 @@ async def show_user_profile(callback: CallbackQuery, telegram_id: int, state: FS
         f"🔑 **Роли:** {role_label}\n"
         f"🆔 **Telegram ID:** `{u['telegram_id']}`\n"
         f"⚙️ **Ҳолати:** {status_text}\n"
-        f"📅 **Рўйхатдан ўтган:** {u['created_at'][:16].replace('T', ' ')}\n"
+        f"📅 **Рўйхатдан ўтган:** {db.format_datetime(u['created_at'])}\n"
     )
     
     keyboard = []
-    if u['telegram_id'] != callback.from_user.id:
+    # Super Admin hisobini o'chirib yuborish yoki uning rolini almashtirish mumkin emas.
+    if u['telegram_id'] != callback.from_user.id and u['role'] != 'super_admin':
         keyboard.append([
             InlineKeyboardButton(text="⚙️ Ролни ўзгартириш", callback_data=f"usermgmt_changerole_{telegram_id}")
         ])
@@ -198,6 +188,11 @@ async def callback_setrole(callback: CallbackQuery, state: FSMContext):
     telegram_id = int(parts[2])
     role_key = parts[3]
     
+    u = await db.get_user(telegram_id)
+    if not u or u['telegram_id'] == callback.from_user.id or u['role'] == 'super_admin' or role_key not in ROLE_LABELS:
+        await callback.answer("Bu akkaunt rolini o'zgartirib bo'lmaydi.", show_alert=True)
+        return
+
     await db.update_user_role(telegram_id, role_key)
     
     u = await db.get_user(telegram_id)
@@ -224,6 +219,9 @@ async def callback_setrole(callback: CallbackQuery, state: FSMContext):
 async def callback_delconfirm(callback: CallbackQuery, state: FSMContext):
     telegram_id = int(callback.data.split("_")[2])
     u = await db.get_user(telegram_id)
+    if not u or u['telegram_id'] == callback.from_user.id or u['role'] == 'super_admin':
+        await callback.answer("Bu akkauntni o'chirib bo'lmaydi.", show_alert=True)
+        return
     text = f"⚠️ **Ҳақиқатан ҳам {u['full_name']}ни тизимдан ўчириб юбормоқчисиз?**"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -238,6 +236,10 @@ async def callback_delconfirm(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("usermgmt_delete_"), is_super_admin_callback)
 async def callback_delete(callback: CallbackQuery, state: FSMContext):
     telegram_id = int(callback.data.split("_")[2])
+    u = await db.get_user(telegram_id)
+    if not u or u['telegram_id'] == callback.from_user.id or u['role'] == 'super_admin':
+        await callback.answer("Bu akkauntni o'chirib bo'lmaydi.", show_alert=True)
+        return
     await db.reject_user(telegram_id)
     await callback.answer("Фойдаланувчи ўчирилди.", show_alert=True)
     

@@ -1,10 +1,12 @@
 import asyncio
+import os
 import sqlite3
+import sys
 import psycopg
 from psycopg.rows import dict_row
 
 SQLITE_DB = "bot_database.db"
-NEON_URL = "postgresql://neondb_owner:npg_QrN1ZEkJiKX2@ep-young-dawn-atm0dcxd-pooler.c-9.us-east-1.aws.neon.tech/neondb?sslmode=require"
+NEON_URL = os.environ.get("DATABASE_URL")
 
 SCHEMA = [
     """
@@ -75,11 +77,15 @@ SCHEMA = [
     """
 ]
 
-async def migrate():
+async def migrate(reset: bool = False):
+    if not NEON_URL:
+        raise RuntimeError("DATABASE_URL environment variable is required")
+
     print("Connecting to Neon...")
     async with await psycopg.AsyncConnection.connect(NEON_URL) as pg_conn:
-        print("Dropping tables to start fresh...")
-        await pg_conn.execute("DROP TABLE IF EXISTS users, inventory, requests, request_items, vehicles, stock_transactions CASCADE")
+        if reset:
+            print("Dropping tables to start fresh...")
+            await pg_conn.execute("DROP TABLE IF EXISTS users, inventory, requests, request_items, vehicles, stock_transactions CASCADE")
 
         print("Creating tables in Neon...")
         for q in SCHEMA:
@@ -121,7 +127,6 @@ async def migrate():
         print("Migration complete!")
 
 if __name__ == "__main__":
-    import sys
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    asyncio.run(migrate())
+    asyncio.run(migrate(reset="--reset" in sys.argv))

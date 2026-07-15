@@ -39,6 +39,14 @@ export interface TransportOrder {
   gpsStatus: "Faol" | "Oflayn" | "Yuklanmoqda";
 }
 
+export interface Vehicle {
+  name: string;
+  driverName: string;
+  driverPhone: string;
+  model: string;
+  status: string;
+}
+
 export interface MechanicReport {
   id: string;
   vehicle: string;
@@ -71,6 +79,7 @@ export interface DashboardState {
   logs: BotEvent[];
   inventory: InventoryItem[];
   transportOrders: TransportOrder[];
+  vehicles: Vehicle[];
   mechanicStatus: MechanicReport[];
   users: User[];
   attendanceLogs: AttendanceLog[];

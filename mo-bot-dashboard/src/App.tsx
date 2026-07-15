@@ -13,7 +13,6 @@ import {
   User, 
   RefreshCw, 
   Search, 
-  Sparkles, 
   Radio, 
   Layers, 
   History,
@@ -23,6 +22,7 @@ import {
   Settings
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { createPortal } from "react-dom";
 import { DashboardState, BotEvent } from "./types";
 import { StatCards } from "./components/dashboard/StatCards";
 import { MapWidget } from "./components/dashboard/MapWidget";
@@ -38,19 +38,42 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [newEventId, setNewEventId] = useState<string | null>(null);
   const [triggeringSim, setTriggeringSim] = useState(false);
+  const [activityJournalSlot, setActivityJournalSlot] = useState<HTMLElement | null>(null);
+  const [specialVehiclesSlot, setSpecialVehiclesSlot] = useState<HTMLElement | null>(null);
+  const inventoryCardRef = useRef<HTMLDivElement>(null);
+  const [inventoryCardHeight, setInventoryCardHeight] = useState<number | null>(null);
+  const [isDesktopLayout, setIsDesktopLayout] = useState(false);
 
   const [selectedMap, setSelectedMap] = useState<"yangiyol" | "toshkent">("yangiyol");
 
   // Map points resolution
   const mapPoints = selectedMap === "yangiyol" ? yangiyolPoints : toshkentPoints;
   
-  // Gemini AI state
-  const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-
   // Time tracker
   const [currentTime, setCurrentTime] = useState("");
+
+  useEffect(() => {
+    setActivityJournalSlot(document.getElementById("activity-journal-slot"));
+    setSpecialVehiclesSlot(document.getElementById("special-vehicles-slot"));
+  }, [data]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const updateLayout = () => setIsDesktopLayout(media.matches);
+    updateLayout();
+    media.addEventListener("change", updateLayout);
+
+    const card = inventoryCardRef.current;
+    const observer = card
+      ? new ResizeObserver(() => setInventoryCardHeight(card.getBoundingClientRect().height))
+      : null;
+    if (card && observer) observer.observe(card);
+
+    return () => {
+      media.removeEventListener("change", updateLayout);
+      observer?.disconnect();
+    };
+  }, [data]);
 
   // Load initial state
   const fetchState = async (showLoading = false) => {
@@ -117,26 +140,6 @@ export default function App() {
       console.error("Simulation trigger failed", err);
     } finally {
       setTriggeringSim(false);
-    }
-  };
-
-  // Run AI Audit on logs using Gemini
-  const handleAiAudit = async () => {
-    setAiLoading(true);
-    setAiError(null);
-    setAiAnalysis(null);
-    try {
-      const response = await fetch("/api/gemini/analyze", { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || "Сунъий интеллект хизмати фаол эмас");
-      }
-      setAiAnalysis(result.analysis);
-    } catch (err: any) {
-      console.error(err);
-      setAiError(err.message || "Хатолик юз берdi. Gemini API калити тўғри ўрнатилганлигини текширинг.");
-    } finally {
-      setAiLoading(false);
     }
   };
 
@@ -282,7 +285,7 @@ export default function App() {
         </div>
       </header>
 
-      <main id="dashboard_content_stage" className="max-w-7xl mx-auto px-4 py-6 lg:px-8 space-y-8">
+      <main id="dashboard_content_stage" className="max-w-7xl mx-auto px-4 py-6 lg:px-8 flex flex-col gap-8">
         
         {/* 2. KPI metrics grid with larger and highly legible typography */}
         <StatCards stats={data.stats} />
@@ -291,7 +294,7 @@ export default function App() {
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
           {/* Chart A: Ombor Zaxiralari (Professional Stock Card) */}
-          <div className="lg:col-span-7 bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl flex flex-col justify-between">
+          <div ref={inventoryCardRef} className="lg:col-span-7 self-start bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl">
             <div>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-2">
@@ -445,17 +448,22 @@ export default function App() {
             </div>
           </div>
 
+          {/* Right column: role activity and live journal */}
+          <div
+            className="lg:col-span-5 h-full min-h-0 flex flex-col gap-8 overflow-hidden"
+            style={isDesktopLayout && inventoryCardHeight ? { height: inventoryCardHeight } : undefined}
+          >
           {/* Chart B: Roles Activity count & custom radar/bar concept */}
-          <div className="lg:col-span-5 bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl flex flex-col justify-between">
+          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 lg:p-6 shadow-2xl">
             <div>
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                 <div className="flex items-center space-x-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" />
                   <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
                     Роллар Бўйича Фаоллик
                   </h3>
                 </div>
-                <span className="text-xs text-slate-400 font-mono font-bold bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800">
+                <span className="self-start sm:self-auto text-xs text-slate-400 font-mono font-bold bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800">
                   БУГУНГИ СТАТИСТИКА
                 </span>
               </div>
@@ -465,21 +473,21 @@ export default function App() {
             </div>
 
             {/* Custom SVG Column bar charts for aesthetic layout */}
-            <div className="flex items-end justify-between h-56 px-4 pt-8 pb-4 border border-slate-800/60 rounded-xl bg-slate-950/50">
+            <div className="mt-5 flex items-end justify-between h-44 px-3 pt-5 pb-3 border border-slate-800/60 rounded-xl bg-slate-950/50">
               {rolesList.map((role, idx) => {
                 const count = roleCounts[role.key] || 0;
                 const heightPercent = Math.max(12, (count / maxRoleActivity) * 100);
                 
                 return (
-                  <div key={idx} className="flex flex-col items-center flex-1 space-y-3 group relative">
+                  <div key={idx} className="flex flex-col items-center flex-1 gap-2 group relative min-w-0">
                     
                     {/* Permanent/Hover Counter Badge - Highly readable */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-md px-2 py-0.5 text-xs font-mono font-bold text-white shadow-lg -translate-y-1">
+                    <div className="bg-slate-900 border border-slate-800 rounded-md px-1.5 py-0.5 text-[11px] font-mono font-bold text-white shadow-lg">
                       {count} та
                     </div>
 
                     {/* SVG column bar */}
-                    <div className="w-10 bg-slate-950 rounded-lg h-32 flex items-end overflow-hidden relative border border-slate-800">
+                    <div className="w-8 sm:w-9 bg-slate-950 rounded-lg h-24 flex items-end overflow-hidden relative border border-slate-800">
                       <motion.div
                         initial={{ height: 0 }}
                         animate={{ height: `${heightPercent}%` }}
@@ -496,7 +504,7 @@ export default function App() {
                     </div>
 
                     {/* Label */}
-                    <span className="text-xs font-mono text-slate-300 font-bold text-center uppercase tracking-tight block truncate w-16" title={role.label}>
+                    <span className="text-[10px] font-mono text-slate-300 font-bold text-center uppercase tracking-tight block truncate w-12 sm:w-14" title={role.label}>
                       {role.label}
                     </span>
                   </div>
@@ -505,7 +513,7 @@ export default function App() {
             </div>
 
             {/* Total distribution explanation */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 text-xs font-mono text-slate-300 font-medium">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2 mt-3 text-[11px] font-mono text-slate-300 font-medium">
               {rolesList.map((role) => (
                 <div key={role.key} className="flex items-center space-x-2">
                   <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: role.color }} />
@@ -515,138 +523,17 @@ export default function App() {
             </div>
           </div>
 
-        </section>
-
-        {/* 4. Gemini AI Auditor Section with Premium Output & Font Adjustments */}
-        <section className="bg-gradient-to-br from-indigo-950/30 via-indigo-900/10 to-slate-950/90 border border-indigo-500/20 rounded-2xl p-6 lg:p-8 relative overflow-hidden shadow-2xl">
-          
-          {/* Cyber light beam */}
-          <div className="absolute top-0 right-1/4 w-96 h-96 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
-
-          <div className="relative z-10 flex flex-col lg:flex-row items-start justify-between gap-6">
-            
-            <div className="space-y-3 max-w-3xl">
-              <div className="flex items-center space-x-2">
-                <Sparkles className="w-6 h-6 text-indigo-400 animate-pulse shrink-0" />
-                <span className="text-xs font-black font-mono tracking-widest text-indigo-300 uppercase">
-                  GEMINI АИ КЎМАКЧИ АУДИТИ
-                </span>
-              </div>
-              <h2 className="text-xl lg:text-2xl font-black text-white tracking-tight">
-                Кунlik Ҳисобот ва Интеллектуал Таҳлил
-              </h2>
-              <p className="text-slate-300 text-sm lg:text-base leading-relaxed">
-                Тизимдаги барча логларни, омбор қолдиғини, ҳайдовчилар етказиб бериш жараёнларини ва носоз махсус техникалар ҳолатларини Gemini АИ орқали тўлиқ аудит қилинг. Хато-камчиликлар ва самарадорликни ошириш учун тавсиялар олинг.
-              </p>
-            </div>
-
-            <div className="w-full lg:w-auto self-center shrink-0">
-              <button
-                onClick={handleAiAudit}
-                disabled={aiLoading}
-                className="w-full lg:w-auto bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:from-indigo-700 active:to-violet-700 text-white font-bold text-sm px-6 py-4 rounded-xl transition duration-150 flex items-center justify-center space-x-2.5 shadow-xl shadow-indigo-600/30 cursor-pointer disabled:opacity-50 border border-indigo-400/30"
-              >
-                {aiLoading ? (
-                  <>
-                    <RefreshCw className="w-5 h-5 animate-spin" />
-                    <span>Маълумотлар таҳлил қилинмоқда...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-5 h-5 fill-current text-white animate-pulse" />
-                    <span>Gemini АИ аудитни ишга тушириш</span>
-                  </>
-                )}
-              </button>
-            </div>
-
+          <div id="activity-journal-slot" className="relative h-[700px] lg:h-auto lg:flex-1 min-h-0 overflow-hidden" />
           </div>
-
-          {/* AI Result Container */}
-          <AnimatePresence>
-            {(aiAnalysis || aiLoading || aiError) && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.3 }}
-                className="mt-6 border-t border-indigo-500/10 pt-6 relative"
-              >
-                {aiLoading && (
-                  <div className="space-y-4 py-6">
-                    <div className="h-5 bg-indigo-500/10 rounded animate-pulse w-3/4"></div>
-                    <div className="h-5 bg-indigo-500/10 rounded animate-pulse w-5/6"></div>
-                    <div className="h-5 bg-indigo-500/10 rounded animate-pulse w-2/3"></div>
-                    <p className="text-center text-sm text-indigo-300 font-mono animate-pulse">
-                      Gemini 3.5 реал вақтдаги маълумотларни интеграция қилмоқда...
-                    </p>
-                  </div>
-                )}
-
-                {aiError && (
-                  <div className="p-5 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-200 flex items-start space-x-3">
-                    <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold">АИ таҳлил бажарилмади</p>
-                      <p className="mt-1 text-slate-300">{aiError}</p>
-                    </div>
-                  </div>
-                )}
-
-                {aiAnalysis && (
-                  <div className="bg-slate-950/90 border border-indigo-500/20 rounded-2xl p-6 lg:p-8 max-h-[500px] overflow-y-auto shadow-2xl relative border border-indigo-500/30 scrollbar-thin">
-                    <div className="flex items-center justify-between pb-4 border-b border-indigo-500/20 mb-6">
-                      <span className="font-extrabold text-indigo-400 font-sans text-sm lg:text-base flex items-center space-x-2">
-                        <Sparkles className="w-5 h-5 text-indigo-400" />
-                        <span>КУНЛИК ИНТЕЛЛЕКТУАЛ АУДИТ ҲИСОБОТИ (ЎЗБЕК ТИЛИДА)</span>
-                      </span>
-                      <span className="text-xs text-slate-500 font-mono font-bold bg-slate-900 px-3 py-1 rounded border border-slate-800">
-                        Сана: Бугун
-                      </span>
-                    </div>
-                    
-                    {/* Bold, Highly legible typography for report rendering */}
-                    <div className="text-slate-200 text-sm lg:text-base leading-relaxed space-y-6 font-sans">
-                      {aiAnalysis.split("\n\n").map((paragraph, pIdx) => {
-                        // Check if paragraph is a heading or list
-                        if (paragraph.trim().startsWith("1.") || paragraph.trim().startsWith("2.") || paragraph.trim().startsWith("3.") || paragraph.trim().startsWith("4.")) {
-                          return (
-                            <h4 key={pIdx} className="text-base lg:text-lg font-black text-indigo-300 pt-2 flex items-center border-b border-slate-800/60 pb-1.5">
-                              {paragraph}
-                            </h4>
-                          );
-                        }
-                        if (paragraph.trim().startsWith("-") || paragraph.trim().startsWith("*")) {
-                          return (
-                            <ul key={pIdx} className="list-disc pl-5 space-y-2 text-slate-300">
-                              {paragraph.split("\n").map((li, lIdx) => (
-                                <li key={lIdx} className="font-medium text-slate-200">
-                                  {li.replace(/^[\s*-]+/, "")}
-                                </li>
-                              ))}
-                            </ul>
-                          );
-                        }
-                        return (
-                          <p key={pIdx} className="font-medium text-slate-300 whitespace-pre-line leading-relaxed">
-                            {paragraph}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
 
         </section>
 
         {/* 5. Core Interface: Real-time activities feed and Tables stage */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <section className="order-4 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
           {/* Left Column: Real-time activity feeds log (Span 5) */}
-          <div className="lg:col-span-5 bg-slate-900/60 border border-slate-800 rounded-2xl p-6 flex flex-col h-[700px] shadow-2xl">
+          {activityJournalSlot && createPortal(
+          <div className="absolute inset-0 w-full bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col min-h-0 overflow-hidden shadow-2xl">
             
             {/* Logs header and search */}
             <div className="space-y-4 mb-4">
@@ -779,10 +666,10 @@ export default function App() {
               </AnimatePresence>
             </div>
 
-          </div>
+          </div>, activityJournalSlot)}
 
           {/* Right Column: Other Operational Tables (Span 7) */}
-          <div className="lg:col-span-7 space-y-8">
+          <div className="lg:col-span-7 lg:col-start-1 lg:row-start-1 space-y-8">
             
             {/* Navigation Tabs for Right Column */}
             <div className="flex bg-slate-950 p-1.5 rounded-xl border border-slate-800/80 max-w-sm">
@@ -801,58 +688,49 @@ export default function App() {
                 }`}
               >
                 <User className="w-3.5 h-3.5" />
-                <span>Ходимлар рўйхати 👥</span>
+                <span>Ҳайдовчилар давомати 👥</span>
               </button>
             </div>
 
-            {rightTab === "operatsiyalar" ? (
-              <>
+            <div className={rightTab === "operatsiyalar" ? "" : "hidden"}>
                 {/* Table 1: Logistics & Transportation Delivery */}
-                <OperationsTable transportOrders={data.transportOrders} mapPoints={mapPoints} />
-
-                {/* GPS Map Component */}
-                <MapWidget 
-                  transportOrders={data.transportOrders} 
-                  selectedMap={selectedMap} 
-                  setSelectedMap={setSelectedMap} 
-                  mapPoints={mapPoints} 
-                />
+                <OperationsTable vehicles={data.vehicles || []} />
 
                 {/* Table 2: Mechanic and Fleet Repair Logs */}
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
-                  <div className="flex items-center justify-between">
+                {specialVehiclesSlot && createPortal(
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-2xl flex flex-col gap-5 h-[650px]">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="flex items-center space-x-2">
                       <div className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" />
                       <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                        Махсус Техникалар ва Ёқилғи Тарқатиш
+                        Махсус техникалар
                       </h3>
                     </div>
-                    <span className="text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
+                    <span className="self-start sm:self-auto text-xs font-mono font-bold text-slate-300 bg-slate-950 px-3 py-1 rounded-md border border-slate-800">
                       ТЕХНИК АУДИТ
                     </span>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm border-collapse">
+                  <div className="flex-1 min-h-0 overflow-auto dashboard-scrollbar pb-2 pr-1">
+                    <table className="w-full min-w-[390px] sm:min-w-[680px] text-left text-sm border-collapse table-fixed sm:table-auto">
                       <thead>
                         <tr className="border-b border-slate-800 text-slate-400 font-mono font-bold text-xs uppercase tracking-wider">
-                          <th className="py-3 px-1">Код</th>
-                          <th className="py-3 px-2">Транспорт Русуми</th>
+                          <th className="w-12 py-3 px-1">Код</th>
+                          <th className="w-20 py-3 px-2">Транспорт Русуми</th>
                           <th className="py-3 px-2">Аниқланган Носозликлар</th>
-                          <th className="py-3 px-2 text-center">Ҳолат</th>
-                          <th className="py-3 px-2 text-right">Ёқилғи</th>
+                          <th className="w-32 py-3 px-2 text-center">Ҳолат</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/40">
                         {data.mechanicStatus.map((rep, idx) => (
                           <tr key={idx} className="hover:bg-slate-900/40 transition duration-150">
-                            <td className="py-4 px-1 font-mono text-slate-300 font-bold text-sm">{rep.id}</td>
+                            <td className="py-4 px-1 font-mono text-slate-300 font-bold text-sm">{idx + 1}</td>
                             <td className="py-4 px-2 font-extrabold text-slate-100 text-sm">{rep.vehicle}</td>
                             <td className="py-4 px-2 text-slate-300 font-sans text-sm max-w-[200px] truncate" title={rep.issue}>
                               {rep.issue}
                             </td>
-                            <td className="py-4 px-2 text-center">
-                              <span className={`px-2.5 py-1 rounded-md text-xs font-black tracking-wider ${
+                            <td className="w-32 py-4 px-2 text-center">
+                              <span className={`inline-block max-w-full whitespace-normal break-words leading-tight px-2 py-1 rounded-md text-[9px] sm:text-xs font-black tracking-tight sm:tracking-wider ${
                                 rep.status === "Соз" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                                 rep.status === "Таъмирланмоқда" ? "bg-red-500/10 text-red-400 border border-red-500/20 animate-pulse" : 
                                 "bg-amber-500/10 text-amber-400 border border-amber-500/20"
@@ -860,51 +738,66 @@ export default function App() {
                                 {rep.status.toUpperCase()}
                               </span>
                             </td>
-                            <td className="py-4 px-2 text-right font-mono font-black text-sm text-slate-100">
-                              {rep.fuelDistributed > 0 ? (
-                                <span className="text-emerald-400 bg-emerald-500/5 px-2 py-1 rounded border border-emerald-500/10">
-                                  {rep.fuelDistributed} L
-                                </span>
-                              ) : (
-                                <span className="text-slate-500">0 L</span>
-                              )}
-                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                </div>
-              </>
-            ) : (
+                </div>, specialVehiclesSlot)}
+            </div>
+
+            {rightTab === "xodimlar" && (
               <div className="space-y-4">
-                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-2xl">
-                  <div className="flex items-center justify-center space-x-2 mb-6">
+                <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-2xl">
+                  <div className="flex items-center space-x-2 mb-6">
                     <User className="w-5 h-5 text-indigo-400" />
                     <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-                      Тизим фойдаланувчилари
+                      Ҳайдовчилар давомати
                     </h3>
                   </div>
-                  <div className="flex flex-col gap-2">
-                    {data.users && data.users.map((user) => {
-                      const Meta = roleMeta[user.roleName] || roleMeta["Brigadir"];
-                      const RoleIcon = Meta?.icon || User;
-                      
-                      return (
-                        <div key={user.id} className="flex items-center justify-center bg-[#1e293b]/60 border border-slate-700/50 rounded-xl px-4 py-4 hover:bg-slate-700/60 transition-colors shadow-sm">
-                          <User className="w-5 h-5 text-slate-400 mr-2" />
-                          <span className="text-slate-100 font-bold text-base">{user.fullName}</span>
-                          <span className="text-slate-100 font-bold text-base ml-1.5 flex items-center">
-                            ({user.roleName} <RoleIcon className="w-4 h-4 ml-1.5 text-slate-300" />)
+                  {data.attendanceLogs?.length ? (
+                    <div className="flex flex-col gap-3">
+                      {data.attendanceLogs.map((entry) => (
+                        <div key={entry.id} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 sm:gap-4 items-center bg-[#1e293b]/60 border border-slate-700/50 rounded-xl px-4 py-4">
+                          <div>
+                            <p className="text-slate-100 font-bold">{entry.employeeName}</p>
+                            <p className="text-xs text-slate-400">{entry.role}</p>
+                          </div>
+                          <span className="text-sm font-mono font-bold text-slate-200">{entry.timeFormatted}</span>
+                          <span className={`justify-self-start sm:justify-self-end px-2.5 py-1 rounded-md text-xs font-black border ${
+                            entry.status === "Kirish"
+                              ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                              : entry.status === "Kechikdi"
+                                ? "text-amber-400 bg-amber-500/10 border-amber-500/20"
+                                : "text-blue-400 bg-blue-500/10 border-blue-500/20"
+                          }`}>
+                            {entry.status === "Kirish" ? "КИРДИ" : entry.status === "Kechikdi" ? "КЕЧИКДИ" : "ЧИҚДИ"}
                           </span>
                         </div>
-                      );
-                    })}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950/40 px-5 py-12 text-center">
+                      <User className="w-10 h-10 text-slate-600 mx-auto mb-3" />
+                      <p className="text-slate-200 font-bold">Давомат маълумотлари ҳали келмаган</p>
+                      <p className="text-sm text-slate-500 mt-2">Face ID тизими улангандан кейин ҳайдовчиларнинг кириш ва чиқиш вақтлари шу ерда кўринади.</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
+          </div>
+
+          {/* GPS xaritasi jurnal ostidagi o'ng ustunda */}
+          <div className="lg:col-span-5 lg:col-start-8 lg:row-start-1">
+            <MapWidget
+              transportOrders={data.transportOrders}
+              selectedMap={selectedMap}
+              setSelectedMap={setSelectedMap}
+              mapPoints={mapPoints}
+            />
+            <div id="special-vehicles-slot" className="mt-8" />
           </div>
 
         </section>

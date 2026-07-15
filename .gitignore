@@ -19,6 +19,10 @@ __pycache__/
 # Excel hisobot fayllari
 *.xlsx
 
+# Runtime loglari
+*.log
+*.log.*
+
 # OS fayllar
 .DS_Store
 Thumbs.db

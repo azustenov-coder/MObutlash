@@ -4,13 +4,43 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+import asyncio
 import re
+import time
 import database as db
 
 # Kesh: mashina sonlari (DB ga har safar murojaat qilmaslik uchun)
-_vehicle_cache = {'soz': 0, 'nosoz': 0, 'total': 0}
+_vehicle_cache = {'soz': 0, 'nosoz': 0, 'total': 0, 'updated_at': 0.0}
+_menu_counts_cache: dict[tuple[str, int], tuple[float, dict]] = {}
+VEHICLE_CACHE_TTL_SECONDS = 20
+MENU_COUNTS_CACHE_TTL_SECONDS = 8
 
 router = Router()
+
+EXCEL_REPORT_BUTTONS = (
+    "Excel hisobot yuklab olish 📊",
+    "Excel ҳисобот юклаб олиш 📊",
+    "Ехсел ҳисобот юклаб олиш 📊",
+)
+
+MAIN_MENU_PREFIXES = (
+    "Аъзолик сўровлари", "Ходимлар рўйхати", "Кутилаётган заявкалар",
+    "Барча заявкалар", "Тугалланмаган заявкалар", "Тугалланган заявкалар",
+    "Заявкалар ҳаракати", "Омбор қолдиқлари", "Excel ҳисобот юклаб олиш",
+    "Ехсел ҳисобот юклаб олиш",
+    "Кунлик ҳисобот", "Соз ҳолат", "Носоз ҳолат", "Автомашиналар",
+    "Автолар", "Менинг заявкаларим", "Складдан олиш",
+    "Тайёрланиши кутилаётганлар", "Омбор захирасини бошқариш",
+    "Етказилиши кутилаётганлар", "Қидирилаётган товарлар",
+    "Актив етказувларим", "Склад қабулини кутаётганлар", "Кун якуни",
+    "Kutilayotgan zayavkalar", "Barcha zayavkalar", "Ombor qoldiqlari",
+    "Excel hisobot yuklab olish", "Kunlik hisobot", "Yetkazilishi kutilayotganlar",
+    "Qidirilayotgan tovarlar", "Aktiv yetkazuvlarim", "Sklad qabulini kutayotganlar",
+)
+
+
+def is_main_menu_text(text: str) -> bool:
+    return any(text.startswith(prefix) for prefix in MAIN_MENU_PREFIXES)
 
 class RegistrationStates(StatesGroup):
     waiting_for_name = State()
@@ -21,7 +51,7 @@ ROLE_LABELS = {
     'manager': 'Boshqaruvchi 💼',
     'observer': 'Boshqaruvchi 2 💼',
     'mechanic': 'Mexanik 🔧',
-    'brigadier': 'Brigadir RB 🚜',
+    'brigadier': 'Brigadir RB 🏭',
     'courier': "Ta'minotchi 🚚",
     'warehouseman': 'Skladchik 📦'
 }
@@ -37,26 +67,35 @@ def get_role_by_input(text: str) -> str:
     
     matches = {
         'boshqaruvchi': 'manager',
+        'бошқарувчи': 'manager',
         'manager': 'manager',
         'boshqaruvchi 2': 'observer',
+        'бошқарувчи 2': 'observer',
         'boshqaruvchi2': 'observer',
+        'бошқарувчи2': 'observer',
         'kuzatuvchi': 'observer',
         'observer': 'observer',
         'mexanik': 'mechanic',
+        'механик': 'mechanic',
         'mechanic': 'mechanic',
         'brigadir': 'brigadier',
+        'бригадир': 'brigadier',
         'brigadir rb': 'brigadier',
+        'бригадир рб': 'brigadier',
         'brigadier rb': 'brigadier',
         # Eski yozuv mosligi uchun saqlanadi; bot endi RB deb ko'rsatadi.
         'brigadir br': 'brigadier',
         'brigadier': 'brigadier',
         'yetkazib beruvchi': 'courier',
         'taminotchi': 'courier',
+        'таъминотчи': 'courier',
         'taminotchi 🚚': 'courier',
         'kuryer': 'courier',
         'courier': 'courier',
         'skladchik': 'warehouseman',
+        'складчик': 'warehouseman',
         'omborchi': 'warehouseman',
+        'омборчи': 'warehouseman',
         'warehouseman': 'warehouseman'
     }
     return matches.get(cleaned)
@@ -73,16 +112,31 @@ def get_role_keyboard():
         keyboard.append(row)
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True, one_time_keyboard=True)
 
-async def refresh_vehicle_cache():
+async def refresh_vehicle_cache(force: bool = False):
     """Mashina sonlarini DB dan yangilash (async, blokirovkasiz)"""
     global _vehicle_cache
+    now = time.monotonic()
+    if not force and now - _vehicle_cache.get('updated_at', 0.0) < VEHICLE_CACHE_TTL_SECONDS:
+        return
     try:
         counts = await db.get_vehicle_counts()
         _vehicle_cache['soz'] = counts.get('soz', 0)
         _vehicle_cache['nosoz'] = counts.get('nosoz', 0)
         _vehicle_cache['total'] = counts.get('total', 0)
+        _vehicle_cache['updated_at'] = now
     except Exception:
         pass  # Kesh eski qiymatlarni saqlaydi
+
+
+async def _get_cached_menu_counts(cache_key: tuple[str, int], loader):
+    """Keep rapidly repeated menu presses from hitting PostgreSQL each time."""
+    now = time.monotonic()
+    cached = _menu_counts_cache.get(cache_key)
+    if cached and now - cached[0] < MENU_COUNTS_CACHE_TTL_SECONDS:
+        return cached[1]
+    counts = await loader()
+    _menu_counts_cache[cache_key] = (now, counts)
+    return counts
 
 def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None, vehicle_count: int = None, request_counts: dict = None, leadership_counts: dict = None, courier_counts: dict = None):
     # Agar son berilmagan bo'lsa, keshdan olamiz (blokirovkasiz!)
@@ -184,16 +238,34 @@ def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None,
 
 async def get_user_main_keyboard(telegram_id: int, role: str):
     """Build a fresh role keyboard with current PostgreSQL counters."""
-    await refresh_vehicle_cache()
     request_counts = None
     leadership_counts = None
     courier_counts = None
     if role in ['mechanic', 'brigadier']:
-        request_counts = await db.get_user_request_counts(telegram_id)
+        _, request_counts = await asyncio.gather(
+            refresh_vehicle_cache(),
+            _get_cached_menu_counts(
+                ('requests', telegram_id),
+                lambda: db.get_user_request_counts(telegram_id),
+            ),
+        )
     elif role in ['super_admin', 'manager', 'observer']:
-        leadership_counts = await db.get_leadership_menu_counts()
+        _, leadership_counts = await asyncio.gather(
+            refresh_vehicle_cache(),
+            _get_cached_menu_counts(
+                ('leadership', 0), db.get_leadership_menu_counts
+            ),
+        )
     elif role == 'courier':
-        courier_counts = await db.get_courier_menu_counts(telegram_id)
+        _, courier_counts = await asyncio.gather(
+            refresh_vehicle_cache(),
+            _get_cached_menu_counts(
+                ('courier', telegram_id),
+                lambda: db.get_courier_menu_counts(telegram_id),
+            ),
+        )
+    else:
+        await refresh_vehicle_cache()
     return get_main_keyboard(
         role,
         request_counts=request_counts,
@@ -232,7 +304,6 @@ async def cmd_start(message: Message, state: FSMContext):
         role_text = ROLE_LABELS.get(user['role'], user['role'])
         if user['role'] == 'super_admin':
             role_text = "Super Admin"
-        await refresh_vehicle_cache()  # Mashina sonlarini yangilash
         await message.answer(
             f"👋 Хуш келибсиз, {user['full_name']}!\n"
             f"🔑 Сизнинг ролингиз: {role_text}",
@@ -247,6 +318,7 @@ async def cmd_start(message: Message, state: FSMContext):
 # /menu komandasi
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, state: FSMContext):
+    await state.clear()
     user = await db.get_user(message.from_user.id)
     if not user:
         await message.answer("Сиз ҳали рўйхатдан ўтмагансиз. /start босинг.")
@@ -257,7 +329,6 @@ async def cmd_menu(message: Message, state: FSMContext):
     role_text = ROLE_LABELS.get(user['role'], user['role'])
     if user['role'] == 'super_admin':
         role_text = "Super Admin"
-    await refresh_vehicle_cache()  # Mashina sonlarini yangilash
     await message.answer(
         f"🔄 Меню янгиланди!\n🔑 Ролингиз: {role_text}",
         reply_markup=await get_user_main_keyboard(message.from_user.id, user['role'])
@@ -348,7 +419,7 @@ async def process_role(message: Message, state: FSMContext):
                 print(f"Adminni ogohlantirishda xato: {e}")
 
 # Excel hisobot yuklab olish
-@router.message(F.text.in_(["Excel hisobot yuklab olish 📊", "Excel ҳисобот юклаб олиш 📊"]))
+@router.message(F.text.in_(EXCEL_REPORT_BUTTONS))
 async def download_excel_report(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user or user['role'] not in ['super_admin', 'manager', 'warehouseman', 'observer']:
@@ -420,16 +491,12 @@ async def show_warehouse_stock(message: Message):
         await message.answer("Омбор бўш. Ҳозирча ҳеч қандай маҳсулот мавжуд эмас.")
         return
         
-    await message.answer("📦 <b>OMBOR QOLDIQLARI</b>", parse_mode="HTML")
-    for table_chunk in build_inventory_table(stock):
-        await message.answer(table_chunk, parse_mode="HTML")
-
     try:
         from aiogram.types import FSInputFile
         file_path = await db.export_inventory_to_excel()
         await message.answer_document(
             document=FSInputFile(file_path),
-            caption="📊 Ombor qoldiqlari — Excel jadvali",
+            caption="📊 Омбор қолдиқлари — Excel ҳисоботи",
         )
     except Exception as e:
         await message.answer(f"Excel jadvalini yaratishda xatolik: {e}")

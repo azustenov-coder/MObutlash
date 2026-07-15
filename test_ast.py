@@ -1,23 +1,29 @@
+"""Small dependency-free syntax check for every active Python source file."""
+
 import ast
-import re
+from pathlib import Path
 
-with open("database.py", "r", encoding="utf-8") as f:
-    source = f.read()
 
-class SQLStringReplacer(ast.NodeTransformer):
-    def visit_Call(self, node):
-        self.generic_visit(node)
-        if isinstance(node.func, ast.Attribute) and node.func.attr == 'execute':
-            if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                sql = node.args[0].value
-                # Replace ? with %s
-                new_sql = sql.replace('?', '%s')
-                node.args[0].value = new_sql
-        return node
+ACTIVE_PATHS = [
+    Path("main.py"),
+    Path("database.py"),
+    Path("fsm_storage.py"),
+    Path("text_utils.py"),
+    Path("migrate_to_neon.py"),
+    *sorted(Path("handlers").glob("*.py")),
+    *sorted(Path("tests").glob("test_*.py")),
+]
 
-tree = ast.parse(source)
-replacer = SQLStringReplacer()
-new_tree = replacer.visit(tree)
-ast.fix_missing_locations(new_tree)
 
-import astor # Wait, astor is not installed usually. Let's just use simple regex safely.
+def main() -> None:
+    checked = 0
+    for path in ACTIVE_PATHS:
+        if path.name == "mechanic_backup.py":
+            continue
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        checked += 1
+    print(f"Syntax OK: {checked} active Python files")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { GoogleGenAI } from "@google/genai";
 import * as XLSX from "xlsx";
 import { 
   fetchBotEvents, 
   fetchInventory, 
   fetchTransportOrders, 
+  fetchVehicles,
   fetchMechanicStatus,
   fetchUsers,
   pool 
@@ -12,20 +12,6 @@ import {
 import { AttendanceLog, BotEvent } from "./types.js";
 
 export const router = Router();
-
-// Initialize Gemini SDK
-const geminiApiKey = process.env.GEMINI_API_KEY;
-let ai: GoogleGenAI | null = null;
-if (geminiApiKey) {
-  ai = new GoogleGenAI({
-    apiKey: geminiApiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
-}
 
 // Active SSE client connections
 let sseClients: any[] = [];
@@ -62,6 +48,7 @@ router.get("/state", async (req, res) => {
     const botEvents = await fetchBotEvents();
     const inventory = await fetchInventory();
     const transportOrders = await fetchTransportOrders();
+    const vehicles = await fetchVehicles();
     const mechanicStatus = await fetchMechanicStatus();
     const users = await fetchUsers();
     const attendanceLogs: AttendanceLog[] = [];
@@ -76,6 +63,7 @@ router.get("/state", async (req, res) => {
       logs: botEvents,
       inventory,
       transportOrders,
+      vehicles,
       mechanicStatus,
       users,
       attendanceLogs,
@@ -91,7 +79,6 @@ router.get("/state", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 router.get("/events", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -149,73 +136,3 @@ router.get("/download-report", async (req, res) => {
   }
 });
 
-router.post("/gemini/analyze", async (req, res) => {
-  if (!ai) {
-    return res.status(500).json({
-      error: "Gemini API kaliti topilmadi.",
-    });
-  }
-
-  try {
-    const botEvents = await fetchBotEvents();
-    const inventory = await fetchInventory();
-    const transportOrders = await fetchTransportOrders();
-    const mechanicStatus = await fetchMechanicStatus();
-
-    const formattedLogs = botEvents.slice(0, 30).map(e => 
-      `[${e.timeFormatted}] ${e.fullName} (${e.role}): ${e.action} -> ${e.details} [Status: ${e.status}]`
-    ).join("\n");
-
-    const formattedInventory = inventory.map(i => 
-      `- ${i.name}: ${i.quantity} ${i.unit} (Status: ${i.status}, Limit: ${i.minThreshold})`
-    ).join("\n");
-
-    const formattedTransport = transportOrders.map(t => 
-      `- ${t.id} (${t.driverName}): ${t.material} ketmoqda ${t.destination}ga. Status: ${t.status} (${t.progress}%)`
-    ).join("\n");
-
-    const formattedMechanic = mechanicStatus.map(m => 
-      `- ${m.vehicle}: Nosozlik -> ${m.issue}, Status -> ${m.status}, Yoqilg'i -> ${m.fuelDistributed} L`
-    ).join("\n");
-
-    const prompt = `Siz "MO" (Moddiy-Texnika Ta'minoti) tizimining intellektual tahlilchisi va auditorisiz.
-Quyida bugungi Telegram bot faolligi, ombordagi zaxiralar, transport va texnik holatlar jurnali berilgan.
-
-Ushbu ma'lumotlarni o'rganib chiqib, Super Admin uchun o'ta professional, lo'nda va chiroyli tahliliy hisobot tayyorlang. Hisobot to'liq O'zbek tilida bo'lishi shart!
-
-MA'LUMOTLAR JURNALI:
----
-[TELEGRAM BOT LOGLARI]
-${formattedLogs}
-
-[OMBOR ZAXIRALARI]
-${formattedInventory}
-
-[YUK YETKAZIB BERISH ORDERS]
-${formattedTransport}
-
-[TEXNIKA VA MEXANIKA HOLATI]
-${formattedMechanic}
----
-
-TAYYORLANADIGAN HISOBOT TUZILISHI:
-1. 📈 Kunlik faollikning umumiy tahlili (qisqa xulosa, bot orqali qancha ish rejalashtirildi).
-2. ⚠️ Diqqat talab qiluvchi muammolar yoki xavflar (zaxirasi kam qolgan materiallar, buzilgan yuk mashinalari, kechikayotgan haydovchilar).
-3. 👤 Rollar bo'yicha baholash.
-4. 💡 Tizim samaradorligini oshirish bo'yicha 3 ta amaliy tavsiya.
-
-Iltimos, hisobotni juda o'qishga oson, chiroyli Markdown formatida va foydali ma'lumotlar bilan boyitilgan tarzda qaytaring. Keraksiz texnik so'zlarni kamaytirib, aniq biznes qiymatga e'tibor qarating.`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-    });
-
-    res.json({
-      success: true,
-      analysis: response.text,
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: "Xatolik: " + error.message });
-  }
-});

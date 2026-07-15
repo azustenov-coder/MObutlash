@@ -5,3 +5,29 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
+
+.dashboard-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #080b16;
+  scrollbar-gutter: stable;
+}
+
+.dashboard-scrollbar::-webkit-scrollbar {
+  height: 7px;
+  width: 7px;
+}
+
+.dashboard-scrollbar::-webkit-scrollbar-track {
+  background: #080b16;
+  border-radius: 999px;
+}
+
+.dashboard-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(90deg, #334155, #4f46e5);
+  border-radius: 999px;
+  border: 1px solid #0f172a;
+}
+
+.dashboard-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, #475569, #6366f1);
+}

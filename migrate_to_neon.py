@@ -61,7 +61,18 @@ SCHEMA = [
     CREATE TABLE IF NOT EXISTS vehicles (
         name TEXT PRIMARY KEY,
         status TEXT,
-        reason TEXT
+        reason TEXT,
+        driver_name TEXT,
+        driver_phone TEXT,
+        vehicle_model TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS bot_fsm (
+        storage_key TEXT PRIMARY KEY,
+        state TEXT,
+        data JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     """

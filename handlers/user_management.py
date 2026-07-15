@@ -111,7 +111,7 @@ async def process_user_search(message: Message, state: FSMContext):
             
     if not results:
         await message.answer(
-            f"🔍 **'{query}'** бўйича ҳеч қандай ходим топилмаdi.\n"
+            f"🔍 «{query}» бўйича ҳеч қандай ходим топилмади.\n"
             "Қайтадан уриниб кўринг ёки бошқа исм ёзинг:"
         )
         return

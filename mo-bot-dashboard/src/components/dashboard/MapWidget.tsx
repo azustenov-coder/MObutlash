@@ -18,7 +18,7 @@ export function MapWidget({ transportOrders, selectedMap, setSelectedMap, mapPoi
             <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
           </span>
           <h3 className="text-base font-extrabold text-white uppercase tracking-wider font-sans">
-            GPS Canli Kuzatuv Xaritasi (Live Map)
+            GPS Жонли кузатув харитаси
           </h3>
         </div>
         <select
@@ -26,8 +26,8 @@ export function MapWidget({ transportOrders, selectedMap, setSelectedMap, mapPoi
           onChange={(e) => setSelectedMap(e.target.value as "yangiyol" | "toshkent")}
           className="bg-slate-950 text-xs font-mono font-bold text-slate-300 px-3 py-1.5 rounded-md border border-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
         >
-          <option value="yangiyol">Yangiyo'l Shahri Xaritasi</option>
-          <option value="toshkent">Toshkent Shahri Xaritasi</option>
+          <option value="yangiyol">Янгийўл шаҳри харитаси</option>
+          <option value="toshkent">Тошкент шаҳри харитаси</option>
         </select>
       </div>
 
@@ -169,10 +169,10 @@ export function MapWidget({ transportOrders, selectedMap, setSelectedMap, mapPoi
                     {order.driverName}
                   </text>
                   <text x={x} y={y - 14} textAnchor="middle" fill="#818cf8" className="text-[8px] font-mono">
-                    {order.speed > 0 ? `${order.speed} km/s | ${order.progress}%` : `${order.status} (${order.progress}%)`}
+                    {order.speed > 0 ? `${order.speed} км/с | ${order.progress}%` : `${order.status} (${order.progress}%)`}
                   </text>
                 </g>
-                <title>{`${order.vehicle} (${order.driverName})\nHolat: ${order.status}\nTezlik: ${order.speed} km/s\nProgress: ${order.progress}%\nYuk: ${order.material}`}</title>
+                <title>{`${order.vehicle} (${order.driverName})\nҲолат: ${order.status}\nТезлик: ${order.speed} км/с\nЖараён: ${order.progress}%\nЮк: ${order.material}`}</title>
               </g>
             );
           })}

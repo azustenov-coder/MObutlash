@@ -6,7 +6,7 @@ import datetime
 import time
 from config import DB_PATH
 
-PREDEFINED_VEHICLES = ['102', '103', '106', '107', '108', '109', '112', '115', '117', '122', '123', '477', '478', '480', '481', '482', '484', '485', '488', '492', '493', '494', '497', '615', '617', '499', '489', '487', '124', '125', '126', '127', '9154', '9155', '9156', '9157', '9158', '9159', '361', '362', '364', '809', '810', '961']
+PREDEFINED_VEHICLES = ['102', '103', '106', '107', '108', '109', '112', '115', '117', '122', '123', '477', '478', '480', '481', '482', '484', '485', '488', '491', '492', '493', '494', '497', '615', '617', '499', '489', '487', '124', '125', '126', '127', '9154', '9155', '9156', '9157', '9158', '9159', '361', '362', '364', '809', '810', '961']
 
 # Global connection pool
 db_pool = None
@@ -52,8 +52,24 @@ async def init_db():
     await db_pool.open(wait=True, timeout=30)
     # Vehicle metadata is kept in PostgreSQL so newly imported drivers/models persist.
     async with db_pool.connection() as db:
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS bot_fsm (
+                   storage_key TEXT PRIMARY KEY,
+                   state TEXT,
+                   data JSONB NOT NULL DEFAULT '{}'::jsonb,
+                   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_name TEXT")
+        await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_phone TEXT")
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_model TEXT")
+        # Hot-path indexes used by role menus and request workflow filters.
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_requests_creator_status ON requests(created_by, status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_requests_courier_status ON requests(courier_id, status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_requests_vehicle ON requests(vehicle_name)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_request_items_request ON request_items(request_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_role_approved ON users(role, is_approved)")
         await db.commit()
     print("Connected to Neon DB successfully with connection pool")
 
@@ -404,28 +420,26 @@ async def get_leadership_menu_counts():
     """Live count badges for Super Admin, Manager and Manager 2 menus."""
     async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute("SELECT COUNT(*) AS count FROM users WHERE is_approved = 0")
-            pending_users = (await cursor.fetchone())['count']
-            await cursor.execute("SELECT COUNT(*) AS count FROM users WHERE is_approved = 1")
-            approved_users = (await cursor.fetchone())['count']
-            await cursor.execute("SELECT COUNT(*) AS count FROM requests WHERE status IN ('pending_approval', 'pending_admin_approval')")
-            pending_requests = (await cursor.fetchone())['count']
-            await cursor.execute("SELECT COUNT(*) AS count FROM requests WHERE status NOT IN ('completed', 'rejected')")
-            open_requests = (await cursor.fetchone())['count']
-            await cursor.execute("SELECT COUNT(*) AS count FROM requests WHERE status = 'completed'")
-            completed_requests = (await cursor.fetchone())['count']
-            await cursor.execute("SELECT COUNT(*) AS count FROM requests")
-            all_requests = (await cursor.fetchone())['count']
-            await cursor.execute("SELECT COUNT(*) AS count FROM inventory")
-            inventory_items = (await cursor.fetchone())['count']
-            return {
-                'pending_users': pending_users,
-                'approved_users': approved_users,
-                'pending_requests': pending_requests,
-                'open_requests': open_requests,
-                'completed_requests': completed_requests,
-                'all_requests': all_requests,
-                'inventory_items': inventory_items,
+            await cursor.execute(
+                """SELECT
+                       (SELECT COUNT(*) FROM users WHERE is_approved = 0) AS pending_users,
+                       (SELECT COUNT(*) FROM users WHERE is_approved = 1) AS approved_users,
+                       COUNT(*) FILTER (
+                           WHERE status IN ('pending_approval', 'pending_admin_approval')
+                       ) AS pending_requests,
+                       COUNT(*) FILTER (
+                           WHERE status NOT IN ('completed', 'rejected')
+                       ) AS open_requests,
+                       COUNT(*) FILTER (WHERE status = 'completed') AS completed_requests,
+                       COUNT(*) AS all_requests,
+                       (SELECT COUNT(*) FROM inventory) AS inventory_items
+                   FROM requests"""
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else {
+                'pending_users': 0, 'approved_users': 0, 'pending_requests': 0,
+                'open_requests': 0, 'completed_requests': 0, 'all_requests': 0,
+                'inventory_items': 0,
             }
 
 async def get_all_my_requests(telegram_id: int):
@@ -506,62 +520,59 @@ async def issue_request_to_creator(request_id: int, creator_id: int):
         await db.commit()
 
 
-async def upsert_vehicle_metadata(name: str, driver_name: str, vehicle_model: str):
+async def upsert_vehicle_metadata(
+    name: str,
+    driver_name: str,
+    vehicle_model: str,
+    driver_phone: str | None = None,
+):
     """Create/update vehicle owner metadata without changing its current status."""
     async with db_pool.connection() as db:
         await db.execute(
-            """INSERT INTO vehicles (name, status, reason, driver_name, vehicle_model)
-               VALUES (%s, 'soz', NULL, %s, %s)
+            """INSERT INTO vehicles
+                   (name, status, reason, driver_name, vehicle_model, driver_phone)
+               VALUES (%s, 'soz', NULL, %s, %s, %s)
                ON CONFLICT (name) DO UPDATE SET
                    driver_name = EXCLUDED.driver_name,
-                   vehicle_model = EXCLUDED.vehicle_model""",
-            (name.strip(), driver_name.strip(), vehicle_model.strip()),
+                   vehicle_model = EXCLUDED.vehicle_model,
+                   driver_phone = COALESCE(EXCLUDED.driver_phone, vehicles.driver_phone)""",
+            (
+                name.strip(),
+                driver_name.strip(),
+                vehicle_model.strip(),
+                driver_phone.strip() if driver_phone else None,
+            ),
         )
         await db.commit()
 
 
-async def analyze_inventory_with_gemini(stock: list[dict]) -> dict:
-    """Produce a short Uzbek inventory audit for the Excel AI sheet."""
-    import aiohttp
-    import json
+def analyze_inventory_by_rules(stock: list[dict]) -> dict:
+    """Create a deterministic inventory audit without external services."""
+    total_items = len(stock)
+    total_quantity = sum(int(item.get('quantity') or 0) for item in stock)
+    empty = [item for item in stock if int(item.get('quantity') or 0) == 0]
+    critical = [item for item in stock if 0 < int(item.get('quantity') or 0) <= 10]
+    sufficient = [item for item in stock if int(item.get('quantity') or 0) > 10]
 
-    api_key = os.environ.get('GEMINI_API_KEY')
-    if not api_key:
-        return {'error': 'GEMINI_API_KEY sozlanmagan.'}
+    risks = [f"{item['name']}: тугаган" for item in empty]
+    risks.extend(f"{item['name']}: {item['quantity']} дона қолган" for item in critical)
 
-    inventory_text = '\n'.join(
-        f"- {item['name']}: {item['quantity']} dona ({item.get('category', 'butlovchi')})"
-        for item in stock
-    )
-    prompt = f'''Siz MO butlash ombori uchun tahlilchisiz.
-Quyidagi ombor qoldiqlarini tahlil qiling. Javobni faqat JSON formatida, o'zbek lotin tilida bering:
-{{"summary":"qisqa xulosa", "risks":["..."], "recommendations":["..."]}}
-Miqdori 10 yoki undan kam mahsulotlarga alohida e'tibor bering. Sonlarni o'zgartirmang.
+    recommendations = []
+    if empty:
+        recommendations.append(f"Тугаган {len(empty)} та маҳсулотни биринчи навбатда харид қилиш.")
+    if critical:
+        recommendations.append(f"Қолдиғи 10 донадан кам бўлган {len(critical)} та маҳсулот учун буюртма тайёрлаш.")
+    if not empty and not critical:
+        recommendations.append("Барча маҳсулотлар етарли; режали назоратни давом эттириш.")
 
-OMBOR:
-{inventory_text}'''
-    payload = {
-        'contents': [{'parts': [{'text': prompt}]}],
-        'generationConfig': {'responseMimeType': 'application/json'},
+    return {
+        'summary': (
+            f"Жами {total_items} хил маҳсулот, {total_quantity} дона. "
+            f"Етарли: {len(sufficient)}, кам қолган: {len(critical)}, тугаган: {len(empty)}."
+        ),
+        'risks': risks,
+        'recommendations': recommendations,
     }
-    url = (
-        'https://generativelanguage.googleapis.com/v1beta/models/'
-        f'gemini-1.5-flash:generateContent?key={api_key}'
-    )
-    try:
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=payload) as response:
-                if response.status != 200:
-                    return {'error': f'Gemini API xatosi: {response.status}'}
-                result = await response.json()
-        text = result['candidates'][0]['content']['parts'][0]['text']
-        analysis = json.loads(text)
-        if isinstance(analysis, dict):
-            return analysis
-    except Exception as error:
-        return {'error': f'Gemini tahlili olinmadi: {error}'}
-    return {'error': 'Gemini tahlil formatini qaytara olmadi.'}
 
 
 async def export_inventory_to_excel():
@@ -570,7 +581,7 @@ async def export_inventory_to_excel():
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
     stock = await get_all_inventory()
-    ai_analysis = await analyze_inventory_with_gemini(stock)
+    analysis = analyze_inventory_by_rules(stock)
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = 'Ombor qoldiqlari'
@@ -613,35 +624,30 @@ async def export_inventory_to_excel():
     worksheet.freeze_panes = 'A3'
     worksheet.auto_filter.ref = f'A2:D{max(2, len(stock) + 2)}'
 
-    ai_sheet = workbook.create_sheet('AI tahlil')
-    ai_sheet.sheet_view.showGridLines = False
-    ai_sheet.merge_cells('A1:B1')
-    ai_sheet['A1'] = 'GEMINI AI — OMBOR TAHLILI'
-    ai_sheet['A1'].font = Font(name='Calibri', size=14, bold=True, color='FFFFFF')
-    ai_sheet['A1'].fill = PatternFill('solid', fgColor='7030A0')
-    ai_sheet['A1'].alignment = Alignment(horizontal='center')
-    ai_sheet.column_dimensions['A'].width = 22
-    ai_sheet.column_dimensions['B'].width = 95
+    analysis_sheet = workbook.create_sheet('Qoidaviy tahlil')
+    analysis_sheet.sheet_view.showGridLines = False
+    analysis_sheet.merge_cells('A1:B1')
+    analysis_sheet['A1'] = 'OMBOR ҚОЛДИҚЛАРИ — ҚОИДАВИЙ ТАҲЛИЛ'
+    analysis_sheet['A1'].font = Font(name='Calibri', size=14, bold=True, color='FFFFFF')
+    analysis_sheet['A1'].fill = PatternFill('solid', fgColor='1F4E79')
+    analysis_sheet['A1'].alignment = Alignment(horizontal='center')
+    analysis_sheet.column_dimensions['A'].width = 22
+    analysis_sheet.column_dimensions['B'].width = 95
 
     def add_analysis_row(row: int, label: str, value: str, color: str = 'FFFFFF'):
-        label_cell = ai_sheet.cell(row=row, column=1, value=label)
-        value_cell = ai_sheet.cell(row=row, column=2, value=value)
+        label_cell = analysis_sheet.cell(row=row, column=1, value=label)
+        value_cell = analysis_sheet.cell(row=row, column=2, value=value)
         for cell in (label_cell, value_cell):
             cell.font = Font(name='Calibri', size=10, bold=cell.column == 1)
             cell.fill = PatternFill('solid', fgColor=color)
             cell.alignment = Alignment(vertical='top', wrap_text=True)
             cell.border = border
 
-    if ai_analysis.get('error'):
-        add_analysis_row(3, 'Holat', ai_analysis['error'], 'FCE4D6')
-    else:
-        add_analysis_row(3, 'Qisqa xulosa', ai_analysis.get('summary', 'Tahlil mavjud emas.'))
-        risks = ai_analysis.get('risks', [])
-        recommendations = ai_analysis.get('recommendations', [])
-        add_analysis_row(5, 'Xavflar', '\n'.join(f'• {risk}' for risk in risks) or 'Aniq xavf topilmadi.', 'FFF2CC')
-        add_analysis_row(7, 'Tavsiyalar', '\n'.join(f'• {item}' for item in recommendations) or 'Tavsiya mavjud emas.', 'E2F0D9')
+    add_analysis_row(3, 'Қисқа хулоса', analysis['summary'])
+    add_analysis_row(5, 'Хавфлар', '\n'.join(f"• {risk}" for risk in analysis['risks']) or 'Аниқ хавф топилмади.', 'FFF2CC')
+    add_analysis_row(7, 'Тавсиялар', '\n'.join(f"• {item}" for item in analysis['recommendations']), 'E2F0D9')
     for row in range(3, 9):
-        ai_sheet.row_dimensions[row].height = 42
+        analysis_sheet.row_dimensions[row].height = 42
 
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')
     file_path = f'MO_Ombor_Qoldiqlari_{timestamp}.xlsx'
@@ -725,7 +731,8 @@ async def get_vehicle_overview(vehicle_name: str):
             )
             history_requests = await cursor.fetchall()
             await cursor.execute(
-                'SELECT status, reason, driver_name, vehicle_model FROM vehicles WHERE name = %s',
+                '''SELECT status, reason, driver_name, driver_phone, vehicle_model
+                   FROM vehicles WHERE name = %s''',
                 (vehicle_name,),
             )
             vehicle = await cursor.fetchone()

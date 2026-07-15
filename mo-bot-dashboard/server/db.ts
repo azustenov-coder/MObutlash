@@ -6,7 +6,7 @@ dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 import pkg from 'pg';
 const { Pool } = pkg;
-import { BotEvent, InventoryItem, TransportOrder, MechanicReport, User } from "./types.js";
+import { BotEvent, InventoryItem, TransportOrder, MechanicReport, User, Vehicle } from "./types.js";
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -132,6 +132,22 @@ export async function fetchTransportOrders(): Promise<TransportOrder[]> {
       gpsStatus: "Faol"
     };
   });
+}
+
+export async function fetchVehicles(): Promise<Vehicle[]> {
+  if (!pool) return [];
+  const res = await pool.query(`
+    SELECT name, driver_name, driver_phone, vehicle_model, status
+    FROM vehicles
+    ORDER BY CASE WHEN name ~ '^[0-9]+$' THEN name::integer ELSE 999999 END, name
+  `);
+  return res.rows.map((r: any) => ({
+    name: r.name,
+    driverName: r.driver_name || "Киритилмаган",
+    driverPhone: r.driver_phone || "Киритилмаган",
+    model: r.vehicle_model || "Киритилмаган",
+    status: r.status === "soz" ? "Соз" : r.status === "nosoz" ? "Носоз" : (r.status || "Номаълум")
+  }));
 }
 
 export async function fetchMechanicStatus(): Promise<MechanicReport[]> {

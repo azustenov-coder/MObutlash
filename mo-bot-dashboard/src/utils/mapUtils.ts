@@ -1,5 +1,5 @@
 export const yangiyolPoints: Record<string, { x: number; y: number; label: string }> = {
-  sklad: { x: 300, y: 170, label: "Ombor (Sklad-1)" },
+  sklad: { x: 300, y: 170, label: "Омбор (1-омбор)" },
   tinchlik: { x: 180, y: 290, label: "Tinchlik MFY" },
   navruz: { x: 80, y: 210, label: "Navro'z MFY" },
   gulbahor: { x: 480, y: 60, label: "Gulbahor Qo'rg'oni" },
@@ -9,7 +9,7 @@ export const yangiyolPoints: Record<string, { x: number; y: number; label: strin
 };
 
 export const toshkentPoints: Record<string, { x: number; y: number; label: string }> = {
-  sklad: { x: 300, y: 170, label: "Ombor (Sklad-1)" },
+  sklad: { x: 300, y: 170, label: "Омбор (1-омбор)" },
   sergeli: { x: 180, y: 290, label: "Sergeli-5" },
   chilonzor: { x: 80, y: 210, label: "Chilonzor 9" },
   yunusobod: { x: 480, y: 60, label: "Yunusobod 12" },

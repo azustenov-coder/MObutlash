@@ -39,6 +39,14 @@ export interface TransportOrder {
   gpsStatus: string;
 }
 
+export interface Vehicle {
+  name: string;
+  driverName: string;
+  driverPhone: string;
+  model: string;
+  status: string;
+}
+
 export interface MechanicReport {
   id: string;
   vehicle: string;

@@ -3,10 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 import database as db
-import os
-import json
 import re
-import aiohttp
 from handlers.common import get_main_keyboard, get_user_main_keyboard, get_request_manage_keyboard, get_mechanic_install_keyboard, get_mechanic_pickup_keyboard, refresh_vehicle_cache
 from handlers.controller import STATUS_LABELS, send_installation_photo
 
@@ -42,66 +39,9 @@ def get_vehicles_inline_keyboard(vehicles_list, list_type: str = "all"):
         keyboard.append(row)
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# AI/Regex parser functions
+# Local request parser
 async def parse_request_text(text: str) -> list:
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if gemini_key:
-        try:
-            parsed = await parse_with_gemini(text, gemini_key)
-            if parsed:
-                return parsed
-        except Exception as e:
-            print(f"Gemini API parse failed: {e}")
-            
-    # Fallback to regex parser
     return parse_with_regex(text)
-
-async def parse_with_gemini(text: str, api_key: str) -> list:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    payload = {
-        "contents": [{
-            "parts": [{
-                "text": (
-                    "Parse this request for vehicle parts/repairs (Uzbek/Russian/mix) into a structured JSON array.\n"
-                    "Each item must be an object with:\n"
-                    "- 'type': 'repair' or 'purchase'\n"
-                    "- 'name': string (the part name in Latin Uzbek or Russian. E.g. 'pachivnik' or 'balon')\n"
-                    "- 'qty': integer (how many requested, default 1)\n"
-                    "\n"
-                    f"Text: \"{text}\"\n"
-                    "Return ONLY JSON array."
-                )
-            }]
-        }],
-        "generationConfig": {
-            "responseMimeType": "application/json"
-        }
-    }
-    
-    headers = {"Content-Type": "application/json"}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
-            if resp.status == 200:
-                result = await resp.json()
-                content = result['candidates'][0]['content']['parts'][0]['text']
-                data = json.loads(content.strip())
-                if isinstance(data, list):
-                    formatted = []
-                    for item in data:
-                        itype = item.get('type', 'purchase')
-                        if itype not in ('repair', 'purchase'):
-                            itype = 'purchase'
-                        name = item.get('name', '').strip()
-                        if not name:
-                            continue
-                        qty = int(item.get('qty', 1))
-                        formatted.append({
-                            'type': itype,
-                            'name': name,
-                            'qty': qty
-                        })
-                    return formatted
-    return None
 
 def parse_with_regex(text: str) -> list:
     items = []
@@ -237,6 +177,7 @@ async def process_vehicle_info(callback: CallbackQuery):
     text = (
         f"🚗 <b>Автомобил рақами:</b> {vehicle_name}\n\n"
         f"👤 <b>Ҳайдовчи:</b> {vehicle.get('driver_name') or 'Киритилмаган'}\n\n"
+        f"📞 <b>Телефон:</b> {vehicle.get('driver_phone') or 'Киритилмаган'}\n\n"
         f"🚙 <b>Машина номи:</b> {vehicle.get('vehicle_model') or 'Киритилмаган'}\n\n"
         f"⚙️ <b>Ҳолати:</b> {status_emoji}\n"
     )

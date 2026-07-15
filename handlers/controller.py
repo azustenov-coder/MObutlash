@@ -34,6 +34,11 @@ STATUS_LABELS = {
 }
 
 
+def get_approval_target_status(request_type: str | None) -> str:
+    """Route repairs straight to the creator; purchases use the supply chain."""
+    return 'issued_to_mechanic' if request_type == 'repair' else 'approved'
+
+
 async def send_installation_photo(message: Message, request: dict):
     """Show the mechanic's proof photo directly under a completed request."""
     photo_id = request.get('installed_part_photo')
@@ -172,10 +177,14 @@ async def approve_request(callback: CallbackQuery):
         await callback.message.delete()
         return
         
-    # Statusni 'approved' (Tasdiqlangan) ga o'zgartirish
+    is_repair = req.get('request_type') == 'repair'
+    target_status = get_approval_target_status(req.get('request_type'))
     role_label = user['role']
-    await db.update_request_status(request_id, 'approved', callback.from_user.id, role_label)
-    await callback.answer("Заявка тасдиқланди ва таъминотчиларга юборилди.")
+    await db.update_request_status(request_id, target_status, callback.from_user.id, role_label)
+    if is_repair:
+        await callback.answer("Таъмирлаш заявкаси тасдиқланди ва механикка бажариш учун юборилди.")
+    else:
+        await callback.answer("Заявка тасдиқланди ва таъминотчиларга юборилди.")
     
     # Zayavka tarkibi
     items = await db.get_request_items(request_id)
@@ -197,8 +206,9 @@ async def approve_request(callback: CallbackQuery):
         'manager': "Бошқарувчи 💼",
         'observer': "Бошқарувчи 2 💼",
     }[user['role']]
+    destination_text = "механикка бажариш учун юборилди" if is_repair else "етказишга юборилди"
     summary = (
-        f"✅ <b>Заявка №{request_id} {role_display} томонидан тасдиқланди ва етказишга юборилди.</b>\n"
+        f"✅ <b>Заявка №{request_id} {role_display} томонидан тасдиқланди ва {destination_text}.</b>\n"
         f"📋 Тавсиф: {req['description']}\n"
         f"📅 <b>Сана:</b> {created_date}\n"
         f"👤 Тасдиқлади: {user['full_name']}\n\n"
@@ -218,38 +228,39 @@ async def approve_request(callback: CallbackQuery):
             parse_mode="HTML"
         )
     
-    # Ta'minotchilarni (Kuryer) avtomatik ogohlantirish (bilan birga rasm va inline tugmalar yuboriladi)
-    from handlers.common import get_courier_take_keyboard
-    couriers = await db.get_users_by_role('courier')
-    for c in couriers:
-        try:
-            from main import bot
-            msg_text = (
-                f"🚚 <b>Янги буюртма (Заявка №{request_id}) етказиш учун келди!</b>\n\n"
-                f"Механик/Бригадир: {req['creator_name']}\n"
-                f"📋 Тавсиф: {req['description']}\n"
-                f"📅 <b>Сана:</b> {created_date}\n\n"
-                f"🔍 <b>Олиб келинадиган товарлар (Етишмаётган қолдиқ):</b>\n{items_text}\n"
-                f"Етказишни қабул қилиш учун пастдаги тугмани босинг."
-            )
-            kb = get_courier_take_keyboard(request_id)
-            if req['old_part_photo']:
-                await bot.send_photo(
-                    c['telegram_id'],
-                    photo=req['old_part_photo'],
-                    caption=msg_text,
-                    reply_markup=kb,
-                    parse_mode="HTML"
+    if not is_repair:
+        # Only purchase requests need the supplier -> warehouse pipeline.
+        from handlers.common import get_courier_take_keyboard
+        couriers = await db.get_users_by_role('courier')
+        for c in couriers:
+            try:
+                from main import bot
+                msg_text = (
+                    f"🚚 <b>Янги буюртма (Заявка №{request_id}) етказиш учун келди!</b>\n\n"
+                    f"Механик/Бригадир: {req['creator_name']}\n"
+                    f"📋 Тавсиф: {req['description']}\n"
+                    f"📅 <b>Сана:</b> {created_date}\n\n"
+                    f"🔍 <b>Олиб келинадиган товарлар (Етишмаётган қолдиқ):</b>\n{items_text}\n"
+                    f"Етказишни қабул қилиш учун пастдаги тугмани босинг."
                 )
-            else:
-                await bot.send_message(
-                    c['telegram_id'],
-                    text=msg_text,
-                    reply_markup=kb,
-                    parse_mode="HTML"
-                )
-        except Exception as e:
-            print(f"Ta'minotchini ogohlantirishda xato: {e}")
+                kb = get_courier_take_keyboard(request_id)
+                if req['old_part_photo']:
+                    await bot.send_photo(
+                        c['telegram_id'],
+                        photo=req['old_part_photo'],
+                        caption=msg_text,
+                        reply_markup=kb,
+                        parse_mode="HTML"
+                    )
+                else:
+                    await bot.send_message(
+                        c['telegram_id'],
+                        text=msg_text,
+                        reply_markup=kb,
+                        parse_mode="HTML"
+                    )
+            except Exception as e:
+                print(f"Ta'minotchini ogohlantirishda xato: {e}")
 
     # Tasdiqlash natijasini boshqa boshqaruvchilarga real vaqt rejimida yuborish.
     # Ular keyingi menyu so'rovida ham aynan shu holatni PostgreSQL dan ko'radi.
@@ -275,10 +286,19 @@ async def approve_request(callback: CallbackQuery):
     # Yaratuvchini (Mexanik/Brigadir) ogohlantirish
     try:
         from main import bot
-        await bot.send_message(
-            req['created_by'],
-            f"✅ Сизнинг №{request_id}-сонли заявкангиз тасдиқланди ва таъминотчиларга юборилди."
-        )
+        if is_repair:
+            from handlers.common import get_mechanic_install_keyboard
+            await bot.send_message(
+                req['created_by'],
+                f"✅ Сизнинг №{request_id}-сонли таъмирлаш заявкангиз тасдиқланди. "
+                f"Ишни бажариб, исбот расмини юборинг.",
+                reply_markup=get_mechanic_install_keyboard(request_id),
+            )
+        else:
+            await bot.send_message(
+                req['created_by'],
+                f"✅ Сизнинг №{request_id}-сонли заявкангиз тасдиқланди ва таъминотчиларга юборилди."
+            )
     except Exception as e:
         print(f"Yaratuvchini ogohlantirishda xato: {e}")
 
@@ -397,7 +417,7 @@ async def process_req_revision(callback: CallbackQuery):
 @router.message(F.text.in_(["Barcha zayavkalar 📝", "Барча заявкалар 📝"]) | F.text.startswith("Barcha zayavkalar 📝") | F.text.startswith("Барча заявкалар 📝"))
 async def show_all_requests(message: Message):
     user = await db.get_user(message.from_user.id)
-    if not user or user['role'] not in ['super_admin', 'manager', 'observer']:
+    if not user or user['role'] not in ['super_admin', 'manager', 'observer', 'warehouseman']:
         await message.answer("Сизда заявкаларни кўриш ҳуқуқи йўқ.")
         return
         

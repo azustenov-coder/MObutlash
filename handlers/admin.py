@@ -169,7 +169,7 @@ def get_employee_manage_keyboard(telegram_id: int):
         ('manager', 'Boshqaruvchi 💼'),
         ('observer', 'Boshqaruvchi 2 💼'),
         ('mechanic', 'Mexanik 🔧'),
-        ('brigadier', 'Brigadir RB 🚛'),
+        ('brigadier', 'Brigadir RB 🏭'),
         ('courier', "Ta'minotchi 🚚"),
         ('warehouseman', 'Skladchik 📦'),
     ]

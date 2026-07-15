@@ -39,7 +39,7 @@ async def list_incoming_receipts(message: Message):
         
     waiting = await db.get_requests_by_status('waiting_receipt')
     if not waiting:
-        await message.answer("Ҳозирда қабул қилинадиган (таъминотчи топшираётgan) zayavkalar yo'q.")
+        await message.answer("Ҳозирда қабул қилинадиган (таъминотчи топшираётган) заявкалар йўқ.")
         return
         
     for r in waiting:
@@ -558,7 +558,10 @@ async def process_courier_handover(callback: CallbackQuery):
         except Exception as e:
             print(f"Skladchikni ogohlantirishda xato: {e}")
 
-@router.message(F.text.startswith("Sklad qabulini kutayotganlar"))
+@router.message(
+    F.text.startswith("Sklad qabulini kutayotganlar")
+    | F.text.startswith("Склад қабулини кутаётганлар")
+)
 async def list_courier_waiting_receipts(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user or user['role'] != 'courier':

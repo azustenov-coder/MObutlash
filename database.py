@@ -4,7 +4,7 @@ from psycopg_pool import AsyncConnectionPool
 import os
 import datetime
 import time
-from config import DB_PATH
+
 
 PREDEFINED_VEHICLES = ['102', '103', '106', '107', '108', '109', '112', '115', '117', '122', '123', '477', '478', '480', '481', '482', '484', '485', '488', '491', '492', '493', '494', '497', '615', '617', '499', '489', '487', '124', '125', '126', '127', '9154', '9155', '9156', '9157', '9158', '9159', '361', '362', '364', '809', '810', '961']
 
@@ -1230,7 +1230,6 @@ async def export_requests_to_excel():
         date_cell.border = thin_border()
         ws4.row_dimensions[idx].height = 20
     ws4.freeze_panes = 'A3'
-    import datetime
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')
     file_path = f'MO_Butlash_Hisobot_{timestamp}.xlsx'
     wb.save(file_path)
@@ -1240,7 +1239,6 @@ async def export_daily_report_to_excel():
     import openpyxl
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
-    import datetime
     wb = openpyxl.Workbook()
     COLOR_HEADER_BG = '1F4E79'
     COLOR_HEADER_FONT = 'FFFFFF'

@@ -394,7 +394,7 @@ async def process_role(message: Message, state: FSMContext):
     if final_role == 'super_admin':
         await message.answer(
             "Сиз биринчи фойдаланувчи бўлганингиз учун автоматик равишda Супер Админ ролига тайинландингиз ва тасдиқландингиз! 👑",
-            reply_markup=get_main_keyboard(final_role)
+            reply_markup=await get_user_main_keyboard(message.from_user.id, final_role)
         )
     else:
         await message.answer(
@@ -500,7 +500,7 @@ async def show_warehouse_stock(message: Message):
         )
     except Exception as e:
         await message.answer(f"Excel jadvalini yaratishda xatolik: {e}")
-    return
+
 
     tayyor_items = [i for i in stock if i.get('category') == 'tayyor']
     butlovchi_items = [i for i in stock if i.get('category') != 'tayyor']

@@ -55,6 +55,25 @@ class CoreFlowTests(unittest.TestCase):
                 markup = get_main_keyboard(role)
                 self.assertTrue(markup.keyboard)
 
+    def test_mechanic_menu_shows_all_request_counters(self):
+        markup = get_main_keyboard(
+            "mechanic",
+            request_counts={
+                "total": 12,
+                "unfinished": 5,
+                "completed": 7,
+                "ready_for_pickup": 2,
+            },
+        )
+        visible = " | ".join(button.text for row in markup.keyboard for button in row)
+        for expected in (
+            "Менинг заявкаларим 📂 (12)",
+            "Тугалланмаган заявкалар ⏳ (5)",
+            "Складдан олиш 📦 (2)",
+            "Тугалланган заявкалар ✅ (7)",
+        ):
+            self.assertIn(expected, visible)
+
     def test_repair_and_purchase_take_different_paths(self):
         self.assertEqual(get_approval_target_status("repair"), "issued_to_mechanic")
         self.assertEqual(get_approval_target_status("purchase"), "approved")

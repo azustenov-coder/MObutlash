@@ -190,7 +190,7 @@ async def process_stock_qty(message: Message, state: FSMContext):
     cat_lbl = "Тайёр маҳсулот 📦" if category == "tayyor" else "Бутловчи маҳсулот ⚙️"
     await message.answer(
         f"✅ Омбор янгиланди:\n🔹 <b>{name}</b> — {qty} дона ({cat_lbl}) қилиб белгиланди.",
-        reply_markup=get_main_keyboard(user['role'])
+        reply_markup=await get_user_main_keyboard(message.from_user.id, user['role'])
     )
 
 

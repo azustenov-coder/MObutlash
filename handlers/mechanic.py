@@ -269,7 +269,7 @@ async def process_breakdown_reason(message: Message, state: FSMContext):
     
     if text == "Бекор қилиш ❌":
         await state.clear()
-        await message.answer("Ҳолатни ўзгартириш бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Ҳолатни ўзгартириш бекор қилинди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
         
     state_data = await state.get_data()
@@ -277,7 +277,7 @@ async def process_breakdown_reason(message: Message, state: FSMContext):
     
     if not vehicle_name:
         await state.clear()
-        await message.answer("Хатолик юз берди. Илтимос, қайтадан уриниб кўринг.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Хатолик юз берди. Илтимос, қайтадан уриниб кўринг.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
         
     await db.update_vehicle_status(vehicle_name, 'nosoz', text)
@@ -286,7 +286,7 @@ async def process_breakdown_reason(message: Message, state: FSMContext):
     await message.answer(
         f"✅ <b>{vehicle_name}</b> ҳолати муваффақиятли НОСОЗ деб белгиланди!\n"
         f"💬 <b>Носозлик сабаби:</b> {text}",
-        reply_markup=get_main_keyboard(user['role']),
+        reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']),
         parse_mode="HTML"
     )
     
@@ -369,7 +369,7 @@ async def process_photo(message: Message, state: FSMContext):
     if text == "Бекор қилиш ❌":
         user = await db.get_user(message.from_user.id)
         await state.clear()
-        await message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
         
     photo_id = None
@@ -401,7 +401,7 @@ async def process_requester(message: Message, state: FSMContext):
     if message.text == "Бекор қилиш ❌":
         user = await db.get_user(message.from_user.id)
         await state.clear()
-        await message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
     
     if not message.text:
@@ -433,7 +433,7 @@ async def process_request_type(callback: CallbackQuery, state: FSMContext):
         user = await db.get_user(callback.from_user.id)
         await state.clear()
         await callback.message.delete()
-        await callback.message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await callback.message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(callback.from_user.id, user['role']))
         await callback.answer()
         return
     
@@ -467,7 +467,7 @@ async def process_items_text(message: Message, state: FSMContext):
     if message.text == "Бекор қилиш ❌":
         user = await db.get_user(message.from_user.id)
         await state.clear()
-        await message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
         
     if not message.text:
@@ -528,7 +528,7 @@ async def process_loop_decision_callback(callback: CallbackQuery, state: FSMCont
     
     if action == 'cancel':
         await state.clear()
-        await callback.message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await callback.message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(callback.from_user.id, user['role']))
         await callback.answer()
         return
         
@@ -569,7 +569,7 @@ async def process_manual_item_name(message: Message, state: FSMContext):
     if message.text == "Бекор қилиш ❌":
         user = await db.get_user(message.from_user.id)
         await state.clear()
-        await message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
         
     name = message.text.strip()
@@ -591,7 +591,7 @@ async def process_manual_item_qty(message: Message, state: FSMContext):
     if message.text == "Бекор қилиш ❌":
         user = await db.get_user(message.from_user.id)
         await state.clear()
-        await message.answer("Заявка бекор қилинди.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
         
     try:
@@ -737,13 +737,13 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
         await callback.message.answer_photo(
             photo=photo_id,
             caption=summary_text,
-            reply_markup=get_main_keyboard(user['role']),
+            reply_markup=await get_user_main_keyboard(callback.from_user.id, user['role']),
             parse_mode="HTML"
         )
     else:
         await callback.message.answer(
             summary_text,
-            reply_markup=get_main_keyboard(user['role']),
+            reply_markup=await get_user_main_keyboard(callback.from_user.id, user['role']),
             parse_mode="HTML"
         )
 
@@ -938,7 +938,7 @@ async def process_installation_photo(message: Message, state: FSMContext):
         await message.answer(
             "🎉 Раҳмат! Таъмирлаш бўйича заявка муваффақиятли якунланди va yopildi.\n"
             "Isbot rasmi rahbariyatga yuborildi.",
-            reply_markup=get_main_keyboard(user['role'])
+            reply_markup=await get_user_main_keyboard(message.from_user.id, user['role'])
         )
         await notify_admins_completed(request_id, req, photo_id, user)
         return
@@ -997,7 +997,7 @@ async def process_install_confirm_callback(callback: CallbackQuery, state: FSMCo
             "Hisobot va isbot rasmi rahbariyatga yuborildi.",
             reply_markup=None
         )
-        await callback.message.answer("Асосий меню:", reply_markup=get_main_keyboard(user['role']))
+        await callback.message.answer("Асосий меню:", reply_markup=await get_user_main_keyboard(callback.from_user.id, user['role']))
         await notify_admins_completed(request_id, req, photo_id, user)
         await callback.answer()
         return
@@ -1046,7 +1046,7 @@ async def ask_next_item_install_qty(message: Message, state: FSMContext):
         await message.answer(
             f"🎉 Раҳмат! Заявка муваффақиятли якунланди va yopildi.\n"
             f"📊 **Ҳисобот:**\n" + "\n".join(summary_lines) + "\n\nIsbot rasmi va hisobot rahbariyatga yuborildi.",
-            reply_markup=get_main_keyboard(user['role'])
+            reply_markup=await get_user_main_keyboard(message.from_user.id, user['role'])
         )
         await notify_admins_completed(request_id, req, photo_id, user, items_list, items_used_map)
 

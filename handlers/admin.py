@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 import database as db
-from handlers.common import ROLE_LABELS, get_main_keyboard
+from handlers.common import ROLE_LABELS, get_main_keyboard, get_user_main_keyboard
 
 router = Router()
 
@@ -72,7 +72,7 @@ async def process_approve(callback: CallbackQuery):
             user_id,
             f"🎉 Табриклаймиз! Сизнинг сўровингиз тасдиқланди.\n"
             f"Сизга **{role_label}** роли берилди.",
-            reply_markup=get_main_keyboard(user['role']),
+            reply_markup=await get_user_main_keyboard(user_id, user['role']),
             parse_mode="Markdown"
         )
     except Exception as e:
@@ -235,7 +235,7 @@ async def change_employee_role(callback: CallbackQuery):
         await bot.send_message(
             target_id,
             f"🔔 Sizning rolingiz Super Admin tomonidan yangilandi: <b>{new_role_name}</b>",
-            reply_markup=get_main_keyboard(role),
+            reply_markup=await get_user_main_keyboard(target_id, role),
             parse_mode="HTML",
         )
     except Exception as exc:
@@ -358,14 +358,14 @@ async def send_message_to_user(message: Message, state: FSMContext):
         
         await message.answer(
             f"✅ Хабарингиз **{target_name}**га муваффақиятли юборилди!",
-            reply_markup=get_main_keyboard(sender['role'])
+            reply_markup=await get_user_main_keyboard(message.from_user.id, sender['role'])
         )
     except Exception as e:
         print(f"Xabar yuborishda xato: {e}")
         await message.answer(
             f"❌ Хабарни юборишда хатолик юз берди: {e}\n"
             f"Ходим ботни тўхтатган бўлиши мумкин.",
-            reply_markup=get_main_keyboard(sender['role'])
+            reply_markup=await get_user_main_keyboard(message.from_user.id, sender['role'])
         )
     finally:
         await state.clear()

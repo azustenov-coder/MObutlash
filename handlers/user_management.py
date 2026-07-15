@@ -3,7 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 import database as db
-from handlers.common import get_main_keyboard, ROLE_LABELS
+from handlers.common import get_main_keyboard, get_user_main_keyboard, ROLE_LABELS
 
 router = Router()
 
@@ -55,7 +55,7 @@ async def callback_usermgmt_close(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     user = await db.get_user(callback.from_user.id)
     await callback.message.delete()
-    await callback.message.answer("Бошқариш панели ёпилди.", reply_markup=get_main_keyboard(user['role']))
+    await callback.message.answer("Бошқариш панели ёпилди.", reply_markup=await get_user_main_keyboard(callback.from_user.id, user['role']))
     await callback.answer()
 
 @router.callback_query(F.data == "usermgmt_list_approved", is_super_admin_callback)
@@ -104,7 +104,7 @@ async def process_user_search(message: Message, state: FSMContext):
     if query in ["Бекор қилиш ❌", "Bekor qilish", "/cancel", "/start", "/menu"]:
         user = await db.get_user(message.from_user.id)
         await state.clear()
-        await message.answer("Бошқариш панели ёпилди.", reply_markup=get_main_keyboard(user['role']))
+        await message.answer("Бошқариш панели ёпилди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
         return
         
     results = await db.search_users(query)
@@ -208,7 +208,7 @@ async def callback_setrole(callback: CallbackQuery, state: FSMContext):
         await bot.send_message(
             chat_id=telegram_id,
             text=msg_text,
-            reply_markup=get_main_keyboard(role_key)
+            reply_markup=await get_user_main_keyboard(telegram_id, role_key)
         )
     except Exception as e:
         print(f"Failed to notify user {telegram_id} about role change: {e}")

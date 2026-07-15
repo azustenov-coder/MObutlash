@@ -524,6 +524,30 @@ async def show_warehouse_stock(message: Message):
     await message.answer(text, parse_mode="Markdown")
 
 
+# Web-dashboard havolasini yuborish
+@router.message(F.text.in_(["Veb-dashboard 🖥️", "Веб-панел 🖥️"]) | F.text.startswith("Veb-dashboard 🖥️") | F.text.startswith("Веб-панел 🖥️"))
+async def show_web_dashboard(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user or user['role'] not in ['super_admin', 'manager', 'observer']:
+        await message.answer("Сизда ушбу маълумотни кўриш ҳуқуқи йўқ.")
+        return
+        
+    dashboard_url = "https://mo-butlash.vercel.app/"
+    
+    text = (
+        "🖥️ **MO Butlash — Veb-boshqaruv paneli (Web-dashboard)**\n\n"
+        "Boshqaruv paneli orqali real vaqtdagi barcha ma'lumotlar, "
+        "avtomashinalar holati, ombor qoldiqlari va zayavkalarni vizual tarzda kuzatishingiz mumkin.\n\n"
+        "Kirish uchun quyidagi tugmani bosing:"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Veb-panelni ochish 🔗", url=dashboard_url)]
+    ])
+    
+    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
 # --- GLOBAL INLINE KEYBOARDS ---
 
 # Skladchik qabul qilishi uchun tugma

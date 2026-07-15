@@ -36,7 +36,9 @@ MAIN_MENU_PREFIXES = (
     "Kutilayotgan zayavkalar", "Barcha zayavkalar", "Ombor qoldiqlari",
     "Excel hisobot yuklab olish", "Kunlik hisobot", "Yetkazilishi kutilayotganlar",
     "Qidirilayotgan tovarlar", "Aktiv yetkazuvlarim", "Sklad qabulini kutayotganlar",
+    "Veb-dashboard", "Веб-панел", "Веб-дашбоард", "Veb-panel",
 )
+
 
 
 def is_main_menu_text(text: str) -> bool:
@@ -168,7 +170,7 @@ def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None,
             [KeyboardButton(text=membership_btn), KeyboardButton(text=employees_btn)],
             [KeyboardButton(text=pending_btn), KeyboardButton(text=all_requests_btn)],
             [KeyboardButton(text=open_requests_btn), KeyboardButton(text=vehicles_btn_text)],
-            [KeyboardButton(text=completed_requests_btn)],
+            [KeyboardButton(text=completed_requests_btn), KeyboardButton(text="Веб-панел 🖥️")],
             [KeyboardButton(text=movement_btn), KeyboardButton(text=inventory_btn)],
             [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
             [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
@@ -178,7 +180,7 @@ def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None,
             [KeyboardButton(text=pending_btn)],
             [KeyboardButton(text=all_requests_btn), KeyboardButton(text=employees_btn)],
             [KeyboardButton(text=open_requests_btn), KeyboardButton(text=vehicles_btn_text)],
-            [KeyboardButton(text=completed_requests_btn)],
+            [KeyboardButton(text=completed_requests_btn), KeyboardButton(text="Веб-панел 🖥️")],
             [KeyboardButton(text=movement_btn), KeyboardButton(text=inventory_btn)],
             [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
             [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
@@ -188,7 +190,7 @@ def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None,
             [KeyboardButton(text=f"Kutilayotgan zayavkalar 📥 ({leadership_counts.get('pending_requests', 0)})")],
             [KeyboardButton(text=all_requests_btn), KeyboardButton(text=employees_btn)],
             [KeyboardButton(text=open_requests_btn), KeyboardButton(text=vehicles_btn_text)],
-            [KeyboardButton(text=completed_requests_btn)],
+            [KeyboardButton(text=completed_requests_btn), KeyboardButton(text="Veb-dashboard 🖥️")],
             [KeyboardButton(text=movement_btn), KeyboardButton(text=inventory_btn)],
             [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
             [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
@@ -532,7 +534,8 @@ async def show_web_dashboard(message: Message):
         await message.answer("Сизда ушбу маълумотни кўриш ҳуқуқи йўқ.")
         return
         
-    dashboard_url = "https://mo-butlash.vercel.app/"
+    import config
+    dashboard_url = config.DASHBOARD_URL
     
     text = (
         "🖥️ **MO Butlash — Veb-boshqaruv paneli (Web-dashboard)**\n\n"

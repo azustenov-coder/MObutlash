@@ -16,3 +16,6 @@ else:
     ADMIN_ID = None
 
 DB_PATH = "bot_database.db"
+
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://mo-butlash.vercel.app/")
+

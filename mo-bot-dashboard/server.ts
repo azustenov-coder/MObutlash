@@ -10,6 +10,7 @@ import { router as apiRouter } from "./server/api.js";
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = Number(process.env.PORT ?? 3001);
 
 // --- Security Middleware ---

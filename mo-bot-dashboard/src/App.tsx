@@ -198,8 +198,8 @@ export default function App() {
 
   const rolesList = [
     { key: "Super Admin", label: "Админ", color: "#60a5fa", bg: "bg-blue-500/10", border: "border-blue-500/30" },
-    { key: "Boshqaruvchi", label: "Оператор", color: "#a78bfa", bg: "bg-violet-500/10", border: "border-violet-500/30" },
-    { key: "Boshqaruvchi 2", label: "Оператор 2", color: "#8b5cf6", bg: "bg-violet-600/10", border: "border-violet-600/30" },
+    { key: "Boshqaruvchi", label: "Boshqaruvchi", color: "#a78bfa", bg: "bg-violet-500/10", border: "border-violet-500/30" },
+    { key: "Boshqaruvchi 2", label: "Boshqaruvchi 2", color: "#8b5cf6", bg: "bg-violet-600/10", border: "border-violet-600/30" },
     { key: "Brigadir", label: "Бригадир", color: "#34d399", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
     { key: "Skladchik", label: "Омбор", color: "#fbbf24", bg: "bg-amber-500/10", border: "border-amber-500/30" },
     { key: "Ta'minotchi", label: "Таъминотчи", color: "#f97316", bg: "bg-orange-500/10", border: "border-orange-500/30" },
@@ -210,8 +210,8 @@ export default function App() {
 
   const roleMeta: Record<string, any> = {
     "Super Admin": { label: "Админ", color: "text-blue-400 bg-blue-400/10 border-blue-400/20", icon: Layers },
-    "Boshqaruvchi": { label: "Оператор", color: "text-violet-400 bg-violet-400/10 border-violet-400/20", icon: Shield },
-    "Boshqaruvchi 2": { label: "Оператор 2", color: "text-violet-500 bg-violet-500/10 border-violet-500/20", icon: Shield },
+    "Boshqaruvchi": { label: "Boshqaruvchi", color: "text-violet-400 bg-violet-400/10 border-violet-400/20", icon: Shield },
+    "Boshqaruvchi 2": { label: "Boshqaruvchi 2", color: "text-violet-500 bg-violet-500/10 border-violet-500/20", icon: Shield },
     "Brigadir": { label: "Бригадир", color: "text-emerald-400 bg-emerald-400/10 border-emerald-400/20", icon: User },
     "Skladchik": { label: "Омбор", color: "text-amber-400 bg-amber-400/10 border-amber-400/20", icon: Package },
     "Ta'minotchi": { label: "Таъминотчи", color: "text-orange-400 bg-orange-400/10 border-orange-400/20", icon: Truck },
@@ -517,7 +517,7 @@ export default function App() {
               {rolesList.map((role) => (
                 <div key={role.key} className="flex items-center space-x-2">
                   <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: role.color }} />
-                  <span className="truncate">{role.label.split(" ")[0]}</span>
+                  <span className="truncate">{role.label}</span>
                 </div>
               ))}
             </div>

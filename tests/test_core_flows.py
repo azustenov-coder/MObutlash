@@ -100,6 +100,13 @@ class PerformancePathTests(unittest.IsolatedAsyncioTestCase):
         result = await parse_request_text("2 ta balon")
         self.assertEqual(result, [{"type": "purchase", "name": "balon", "qty": 2}])
 
+    async def test_cyrillic_units_parsing(self):
+        result1 = await parse_request_text("balon 2 та")
+        self.assertEqual(result1, [{"type": "purchase", "name": "balon", "qty": 2}])
+        
+        result2 = await parse_request_text("2 та балон")
+        self.assertEqual(result2, [{"type": "purchase", "name": "балон", "qty": 2}])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -46,10 +46,10 @@ async def parse_request_text(text: str) -> list:
 def parse_with_regex(text: str) -> list:
     items = []
     normalized = text.lower()
-    units = ['ta', 'dona', 'shtuk', 'шт', 'шт.', 'd', 'x']
+    units = ['ta', 'та', 'dona', 'дона', 'shtuk', 'штук', 'шт', 'шт.', 'd', 'x']
     
     # Try pattern 1: (number) (optional ta/dona) (name)
-    pattern1 = r'(\d+)\s*(?:ta|dona|shtuk|шт|шт\.|d|x|\*|-)?\s+([^0-9,;\n]+)'
+    pattern1 = r'(\d+)\s*(?:ta|та|dona|дона|shtuk|штук|шт|шт\.|d|x|\*|-)?\s+([^0-9,;\n]+)'
     matches = re.findall(pattern1, normalized)
     
     if matches:
@@ -65,7 +65,7 @@ def parse_with_regex(text: str) -> list:
             
     # If no valid items were found with Pattern 1, try Pattern 2
     if not items:
-        pattern2 = r'([^0-9,;\n]+)\s+(\d+)\s*(?:ta|dona|shtuk|шт|d)?'
+        pattern2 = r'([^0-9,;\n]+)\s+(\d+)\s*(?:ta|та|dona|дона|shtuk|штук|шт|d)?'
         matches2 = re.findall(pattern2, normalized)
         if matches2:
             for name_str, qty_str in matches2:

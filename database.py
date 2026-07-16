@@ -885,8 +885,8 @@ def parse_with_regex_excel(text: str) -> list:
     import re
     items = []
     normalized = text.lower()
-    units = ['ta', 'dona', 'shtuk', 'шт', 'шт.', 'd', 'x']
-    pattern1 = '(\\d+)\\s*(?:ta|dona|shtuk|шт|шт\\.|d|x|\\*|-)?\\s+([^0-9,;\\n]+)'
+    units = ['ta', 'та', 'dona', 'дона', 'shtuk', 'штук', 'шт', 'шт.', 'd', 'x']
+    pattern1 = '(\\d+)\\s*(?:ta|та|dona|дона|shtuk|штук|шт|шт\\.|d|x|\\*|-)?\\s+([^0-9,;\\n]+)'
     matches = re.findall(pattern1, normalized)
     if matches:
         for qty_str, name_str in matches:
@@ -896,7 +896,7 @@ def parse_with_regex_excel(text: str) -> list:
             qty = int(qty_str)
             items.append({'name': name.capitalize(), 'qty': qty})
     if not items:
-        pattern2 = '([^0-9,;\\n]+)\\s+(\\d+)\\s*(?:ta|dona|shtuk|шт|d)?'
+        pattern2 = '([^0-9,;\\n]+)\\s+(\\d+)\\s*(?:ta|та|dona|дона|shtuk|штук|шт|d)?'
         matches2 = re.findall(pattern2, normalized)
         if matches2:
             for name_str, qty_str in matches2:

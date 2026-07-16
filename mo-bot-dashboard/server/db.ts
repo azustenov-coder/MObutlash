@@ -41,6 +41,7 @@ function getRoleName(role: string): string {
     'observer': 'Boshqaruvchi 2',
     'mechanic': 'Mexanik',
     'brigadir': 'Brigadir',
+    'brigadier': 'Brigadir',
     'courier': "Ta'minotchi",
     'warehouseman': 'Skladchik'
   };

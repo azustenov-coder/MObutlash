@@ -419,7 +419,8 @@ async def process_courier_price_input_callback(callback: CallbackQuery, state: F
     await callback.message.answer(
         "💰 <b>Олинgan mahsulotning olinish narxini kiriting (so'mda, faqat son yozing):</b>\n"
         "Masalan: <code>150000</code> yoki <code>25000</code>",
-        reply_markup=ReplyKeyboardRemove()
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -435,7 +436,7 @@ async def process_courier_price_message(message: Message, state: FSMContext):
         
     clean_text = re.sub(r'[^\d]', '', message.text)
     if not clean_text:
-        await message.answer("Илтимос, фақат рақам киритинг (Масалан: <code>150000</code>):")
+        await message.answer("Илтимос, фақат рақам киритинг (Масалан: <code>150000</code>):", parse_mode="HTML")
         return
         
     try:
@@ -443,7 +444,7 @@ async def process_courier_price_message(message: Message, state: FSMContext):
         if price < 0:
             raise ValueError()
     except ValueError:
-        await message.answer("Илтимос, нолдан катта бутун сон киритинг (Масалан: <code>150000</code>):")
+        await message.answer("Илтимос, нолдан катта бутун сон киритинг (Масалан: <code>150000</code>):", parse_mode="HTML")
         return
         
     state_data = await state.get_data()

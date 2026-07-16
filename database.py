@@ -884,27 +884,51 @@ async def update_stock_on_receipt(request_id: int):
 def parse_with_regex_excel(text: str) -> list:
     import re
     items = []
-    normalized = text.lower()
-    units = ['ta', 'та', 'dona', 'дона', 'shtuk', 'штук', 'шт', 'шт.', 'd', 'x']
-    pattern1 = '(\\d+)\\s*(?:ta|та|dona|дона|shtuk|штук|шт|шт\\.|d|x|\\*|-)?\\s+([^0-9,;\\n]+)'
-    matches = re.findall(pattern1, normalized)
-    if matches:
-        for qty_str, name_str in matches:
-            name = name_str.strip().strip(',.;- \t')
-            if not name or name in units:
-                continue
+    units_pattern = r'(?:ta|та|dona|дона|shtuk|штук|шт|шт\.|d|x|\*|-)'
+    
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+            
+        normalized = line.lower()
+        
+        # 1. Try Pattern A: starts with quantity
+        pattern_a = r'^(\d+)\s*' + units_pattern + r'?\s+(.+)$'
+        match_a = re.match(pattern_a, normalized)
+        if match_a:
+            qty_str, name_str = match_a.groups()
             qty = int(qty_str)
-            items.append({'name': name.capitalize(), 'qty': qty})
-    if not items:
-        pattern2 = '([^0-9,;\\n]+)\\s+(\\d+)\\s*(?:ta|та|dona|дона|shtuk|штук|шт|d)?'
-        matches2 = re.findall(pattern2, normalized)
-        if matches2:
-            for name_str, qty_str in matches2:
-                name = name_str.strip().strip(',.;- \t')
-                if not name or name in units:
-                    continue
-                qty = int(qty_str)
-                items.append({'name': name.capitalize(), 'qty': qty})
+            orig_name = line[match_a.start(2):match_a.end(2)].strip().strip(',.;- \t')
+            if orig_name:
+                items.append({'name': orig_name.capitalize(), 'qty': qty})
+                continue
+
+        # 2. Try Pattern B: ends with quantity + unit
+        pattern_b = r'^(.+?)\s+(\d+)\s*' + units_pattern + r'$'
+        match_b = re.match(pattern_b, normalized)
+        if match_b:
+            name_str, qty_str = match_b.groups()
+            qty = int(qty_str)
+            orig_name = line[match_b.start(1):match_b.end(1)].strip().strip(',.;- \t')
+            if orig_name:
+                items.append({'name': orig_name.capitalize(), 'qty': qty})
+                continue
+
+        # 3. Try Pattern C: ends with quantity only (space + number)
+        pattern_c = r'^(.+?)\s+(\d+)$'
+        match_c = re.match(pattern_c, normalized)
+        if match_c:
+            name_str, qty_str = match_c.groups()
+            qty = int(qty_str)
+            orig_name = line[match_c.start(1):match_c.end(1)].strip().strip(',.;- \t')
+            if orig_name:
+                items.append({'name': orig_name.capitalize(), 'qty': qty})
+                continue
+
+        # 4. Fallback: whole line as name, qty 1
+        items.append({'name': line.capitalize(), 'qty': 1})
+        
     return items
 
 async def export_requests_to_excel():

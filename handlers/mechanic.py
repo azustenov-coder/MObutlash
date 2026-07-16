@@ -44,48 +44,60 @@ async def parse_request_text(text: str) -> list:
     return parse_with_regex(text)
 
 def parse_with_regex(text: str) -> list:
+    import re
     items = []
-    normalized = text.lower()
-    units = ['ta', 'та', 'dona', 'дона', 'shtuk', 'штук', 'шт', 'шт.', 'd', 'x']
+    units_pattern = r'(?:ta|та|dona|дона|shtuk|штук|шт|шт\.|d|x|\*|-)'
     
-    # Try pattern 1: (number) (optional ta/dona) (name)
-    pattern1 = r'(\d+)\s*(?:ta|та|dona|дона|shtuk|штук|шт|шт\.|d|x|\*|-)?\s+([^0-9,;\n]+)'
-    matches = re.findall(pattern1, normalized)
-    
-    if matches:
-        for qty_str, name_str in matches:
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+            
+        normalized = line.lower()
+        
+        # 1. Try Pattern A: starts with quantity
+        pattern_a = r'^(\d+)\s*' + units_pattern + r'?\s+(.+)$'
+        match_a = re.match(pattern_a, normalized)
+        if match_a:
+            qty_str, name_str = match_a.groups()
             name = name_str.strip().strip(',.;- \t')
-            if not name or name in units:
-                continue
             qty = int(qty_str)
-            itype = 'purchase'
-            if any(word in name for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']):
-                itype = 'repair'
-            items.append({'type': itype, 'name': name, 'qty': qty})
-            
-    # If no valid items were found with Pattern 1, try Pattern 2
-    if not items:
-        pattern2 = r'([^0-9,;\n]+)\s+(\d+)\s*(?:ta|та|dona|дона|shtuk|штук|шт|d)?'
-        matches2 = re.findall(pattern2, normalized)
-        if matches2:
-            for name_str, qty_str in matches2:
-                name = name_str.strip().strip(',.;- \t')
-                if not name or name in units:
-                    continue
-                qty = int(qty_str)
-                itype = 'purchase'
-                if any(word in name for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']):
-                    itype = 'repair'
-                items.append({'type': itype, 'name': name, 'qty': qty})
-                
-    if not items:
-        clean_text = normalized.strip().strip(',.;- \t')
-        if clean_text:
-            itype = 'purchase'
-            if any(word in clean_text for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']):
-                itype = 'repair'
-            items.append({'type': itype, 'name': clean_text, 'qty': 1})
-            
+            orig_name = line[match_a.start(2):match_a.end(2)].strip().strip(',.;- \t')
+            if orig_name:
+                itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
+                items.append({'type': itype, 'name': orig_name, 'qty': qty})
+                continue
+
+        # 2. Try Pattern B: ends with quantity + unit
+        pattern_b = r'^(.+?)\s+(\d+)\s*' + units_pattern + r'$'
+        match_b = re.match(pattern_b, normalized)
+        if match_b:
+            name_str, qty_str = match_b.groups()
+            name = name_str.strip().strip(',.;- \t')
+            qty = int(qty_str)
+            orig_name = line[match_b.start(1):match_b.end(1)].strip().strip(',.;- \t')
+            if orig_name:
+                itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
+                items.append({'type': itype, 'name': orig_name, 'qty': qty})
+                continue
+
+        # 3. Try Pattern C: ends with quantity only (space + number)
+        pattern_c = r'^(.+?)\s+(\d+)$'
+        match_c = re.match(pattern_c, normalized)
+        if match_c:
+            name_str, qty_str = match_c.groups()
+            name = name_str.strip().strip(',.;- \t')
+            qty = int(qty_str)
+            orig_name = line[match_c.start(1):match_c.end(1)].strip().strip(',.;- \t')
+            if orig_name:
+                itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
+                items.append({'type': itype, 'name': orig_name, 'qty': qty})
+                continue
+
+        # 4. Fallback: treat the whole line as the name, qty 1
+        itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
+        items.append({'type': itype, 'name': line, 'qty': 1})
+        
     return items
 
 @router.message(F.text.startswith("Соз ҳолат 🟢") | F.text.in_(["Soz avtolar 🟢", "Соз автолар 🟢", "Соз ҳолат 🟢"]))

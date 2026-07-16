@@ -107,6 +107,35 @@ class PerformancePathTests(unittest.IsolatedAsyncioTestCase):
         result2 = await parse_request_text("2 та балон")
         self.assertEqual(result2, [{"type": "purchase", "name": "балон", "qty": 2}])
 
+    async def test_multiline_shifting_and_names_with_numbers(self):
+        text = (
+            "шкварной комплект 1 та\n"
+            "ресор кронштейн 2 та\n"
+            "ресор 40см 90/16 1 та\n"
+            "ресор кронштейн сиргаси 2та\n"
+            "ресор палец олди втулка 6 та\n"
+            "ПГУга жидкост 1 та\n"
+            "тяга тепа past orqaga 6 ta\n"
+            "литол 5кг 1 та"
+        )
+        result = await parse_request_text(text)
+        expected = [
+            {"type": "purchase", "name": "шкварной комплект", "qty": 1},
+            {"type": "purchase", "name": "ресор кронштейн", "qty": 2},
+            {"type": "purchase", "name": "ресор 40см 90/16", "qty": 1},
+            {"type": "purchase", "name": "ресор кronstein sirgasi", "qty": 2}, # note casing conversion happens, let's just make it exact
+        ]
+        # Let's verify each item matches perfectly
+        self.assertEqual(len(result), 8)
+        self.assertEqual(result[0], {"type": "purchase", "name": "шкварной комплект", "qty": 1})
+        self.assertEqual(result[1], {"type": "purchase", "name": "ресор кронштейн", "qty": 2})
+        self.assertEqual(result[2], {"type": "purchase", "name": "ресор 40см 90/16", "qty": 1})
+        self.assertEqual(result[3], {"type": "purchase", "name": "ресор кронштейн сиргаси", "qty": 2})
+        self.assertEqual(result[4], {"type": "purchase", "name": "ресор палец олди втулка", "qty": 6})
+        self.assertEqual(result[5], {"type": "purchase", "name": "ПГУга жидкост", "qty": 1})
+        self.assertEqual(result[6], {"type": "purchase", "name": "тяга тепа past orqaga", "qty": 6})
+        self.assertEqual(result[7], {"type": "purchase", "name": "литол 5кг", "qty": 1})
+
 
 if __name__ == "__main__":
     unittest.main()

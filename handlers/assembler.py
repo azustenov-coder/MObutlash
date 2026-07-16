@@ -416,8 +416,12 @@ async def process_courier_price_input_callback(callback: CallbackQuery, state: F
     await state.update_data(price_request_id=request_id)
     await state.set_state(CourierPriceStates.waiting_for_price)
     
+    req = await db.get_request(request_id)
+    description = req['description'] if req else '—'
+    
     await callback.message.answer(
-        "💰 <b>Олинgan mahsulotning olinish narxini kiriting (so'mda, faqat son yozing):</b>\n"
+        f"💰 <b>Заявка №{request_id} бўйича олинган маҳсулотнинг олиниш нархини киритинг (сўмда, фақат сон ёзинг):</b>\n"
+        f"📋 <b>Тавсиф:</b> {description}\n\n"
         "Masalan: <code>150000</code> yoki <code>25000</code>",
         reply_markup=ReplyKeyboardRemove(),
         parse_mode="HTML"

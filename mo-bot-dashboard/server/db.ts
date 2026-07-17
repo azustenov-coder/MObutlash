@@ -75,7 +75,7 @@ export async function fetchBotEvents(): Promise<BotEvent[]> {
     return {
       id: "REQ-" + r.id,
       timestamp: r.created_at.toISOString(),
-      timeFormatted: d.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" }),
+      timeFormatted: d.toLocaleTimeString("uz-UZ", { timeZone: "Asia/Tashkent", hour: "2-digit", minute: "2-digit", hour12: false }),
       role: getRoleName(r.role),
       username: r.username,
       fullName: r.full_name,

@@ -19,10 +19,21 @@ def _invalidate_user_cache(telegram_id: int):
 
 
 def format_datetime(value) -> str:
-    """Format PostgreSQL datetime values and legacy text timestamps consistently."""
+    """Format PostgreSQL datetime values and legacy text timestamps consistently, converting to Uzbekistan time (UTC+5)."""
     if not value:
         return '—'
+    import datetime
+    if isinstance(value, str):
+        try:
+            value = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except Exception:
+            pass
     if hasattr(value, 'strftime'):
+        if value.tzinfo is None:
+            value = value + datetime.timedelta(hours=5)
+        else:
+            uz_tz = datetime.timezone(datetime.timedelta(hours=5))
+            value = value.astimezone(uz_tz)
         return value.strftime('%Y-%m-%d %H:%M')
     return str(value)[:16].replace('T', ' ')
 
@@ -649,7 +660,8 @@ async def export_inventory_to_excel():
     for row in range(3, 9):
         analysis_sheet.row_dimensions[row].height = 42
 
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')
+    uz_tz = datetime.timezone(datetime.timedelta(hours=5))
+    timestamp = datetime.datetime.now(uz_tz).strftime('%Y-%m-%d_%H-%M')
     file_path = f'MO_Ombor_Qoldiqlari_{timestamp}.xlsx'
     workbook.save(file_path)
     return file_path
@@ -967,14 +979,31 @@ async def export_requests_to_excel():
     ws1 = wb.active
     ws1.title = '📋 Zayavkalar'
     ws1.sheet_view.showGridLines = False
-    ws1.merge_cells('A1:N1')
+    ws1.merge_cells('A1:P1')
     title_cell = ws1['A1']
     title_cell.value = 'MO BUTLASH — ZAYAVKALAR HISOBOTI'
     title_cell.font = Font(name='Calibri', bold=True, size=14, color=COLOR_HEADER_FONT)
     title_cell.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
     title_cell.alignment = Alignment(horizontal='center', vertical='center')
     ws1.row_dimensions[1].height = 28
-    headers_zayavka = [('T/r', 6), ('Yaratuvchi (Mexanik/Brigadir)', 28), ('Zayavka Tavsifi', 35), ('Yaratilgan Vaqt', 18), ('Holati', 22), ('Boshqaruvchi', 22), ("Ta'minotchi", 22), ('Skladchik', 22), ('Mahsulot Nomi', 28), ("So'ralgan (dona)", 16), ('Omborda Bor Edi', 16), ('Keltirildi / Yetishmagan', 20), ('Ishlatildi (dona)', 16), ('Omborda Qoldi (dona)', 18)]
+    headers_zayavka = [
+        ('T/r', 6), 
+        ('Moshina Raqami', 18),
+        ('Haydovchi Ismi', 22),
+        ('Yaratuvchi (Mexanik/Brigadir)', 28), 
+        ('Zayavka Tavsifi', 35), 
+        ('Yaratilgan Vaqt', 18), 
+        ('Holati', 22), 
+        ('Boshqaruvchi', 22), 
+        ("Ta'minotchi", 22), 
+        ('Skladchik', 22), 
+        ('Mahsulot Nomi', 28), 
+        ("So'ralgan (dona)", 16), 
+        ('Omborda Bor Edi', 16), 
+        ('Keltirildi / Yetishmagan', 20), 
+        ('Ishlatildi (dona)', 16), 
+        ('Omborda Qoldi (dona)', 18)
+    ]
     for col_idx, (hdr, width) in enumerate(headers_zayavka, start=1):
         cell = ws1.cell(row=2, column=col_idx)
         header_style(cell, hdr)
@@ -982,7 +1011,22 @@ async def export_requests_to_excel():
     ws1.row_dimensions[2].height = 36
     async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute('\n            SELECT r.id, creator.full_name as creator_name, r.description, r.created_at, r.status,\n                   manager.full_name as manager_name, courier.full_name as courier_name,\n                   warehouse.full_name as warehouseman_name,\n                   ri.item_name, ri.quantity_requested, ri.quantity_available, ri.quantity_missing,\n                   r.quantity_used, r.quantity_left\n            FROM requests r\n            LEFT JOIN users creator ON r.created_by = creator.telegram_id\n            LEFT JOIN users manager ON r.approved_by = manager.telegram_id\n            LEFT JOIN users courier ON r.courier_id = courier.telegram_id\n            LEFT JOIN users warehouse ON r.warehouse_released_by = warehouse.telegram_id\n            LEFT JOIN request_items ri ON r.id = ri.request_id\n            ORDER BY r.id ASC\n        ')
+            await cursor.execute('''
+            SELECT r.id, creator.full_name as creator_name, r.description, r.created_at, r.status,
+                   manager.full_name as manager_name, courier.full_name as courier_name,
+                   warehouse.full_name as warehouseman_name,
+                   ri.item_name, ri.quantity_requested, ri.quantity_available, ri.quantity_missing,
+                   r.quantity_used, r.quantity_left,
+                   r.vehicle_name, v.driver_name
+            FROM requests r
+            LEFT JOIN users creator ON r.created_by = creator.telegram_id
+            LEFT JOIN users manager ON r.approved_by = manager.telegram_id
+            LEFT JOIN users courier ON r.courier_id = courier.telegram_id
+            LEFT JOIN users warehouse ON r.warehouse_released_by = warehouse.telegram_id
+            LEFT JOIN request_items ri ON r.id = ri.request_id
+            LEFT JOIN vehicles v ON r.vehicle_name = v.name
+            ORDER BY r.id ASC
+        ''')
             rows = await cursor.fetchall()
     processed_rows = []
     for r in rows:
@@ -1025,11 +1069,28 @@ async def export_requests_to_excel():
         end_row = current_row + num_items - 1
         for offset, r in enumerate(group):
             row_idx = current_row + offset
-            row_vals_item = [r['id'], r['creator_name'] or '—', r['description'] or '—', format_datetime(r['created_at']), STATUS_LABELS_UZ.get(r['status'], r['status'] or '—'), r['manager_name'] or '—', r['courier_name'] or '—', r['warehouseman_name'] or '—', r['item_name'] or '—', r['quantity_requested'] or 0, r['quantity_available'] or 0, r['quantity_missing'] or 0, r['quantity_used'] if r['quantity_used'] is not None else '—', r['quantity_left'] if r['quantity_left'] is not None else '—']
+            row_vals_item = [
+                r['id'], 
+                r.get('vehicle_name') or '—',
+                r.get('driver_name') or '—',
+                r['creator_name'] or '—', 
+                r['description'] or '—', 
+                format_datetime(r['created_at']), 
+                STATUS_LABELS_UZ.get(r['status'], r['status'] or '—'), 
+                r['manager_name'] or '—', 
+                r['courier_name'] or '—', 
+                r['warehouseman_name'] or '—', 
+                r['item_name'] or '—', 
+                r['quantity_requested'] or 0, 
+                r['quantity_available'] or 0, 
+                r['quantity_missing'] or 0, 
+                r['quantity_used'] if r['quantity_used'] is not None else '—', 
+                r['quantity_left'] if r['quantity_left'] is not None else '—'
+            ]
             status_key = r['status']
             for col_idx, val in enumerate(row_vals_item, start=1):
                 cell = ws1.cell(row=row_idx, column=col_idx, value=val)
-                is_num = col_idx in (1, 10, 11, 12, 13, 14)
+                is_num = col_idx in (1, 12, 13, 14, 15, 16)
                 data_cell(cell, val, row_idx, status_key, is_num)
             max_lines = 1
             for val, width in zip(row_vals_item, column_widths):
@@ -1043,12 +1104,12 @@ async def export_requests_to_excel():
                     max_lines = max(max_lines, lines)
             ws1.row_dimensions[row_idx].height = max(20, max_lines * 15 + 5)
         if num_items > 1:
-            cols_to_merge = [1, 2, 3, 4, 5, 6, 7, 8, 13, 14]
+            cols_to_merge = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 16]
             for col_idx in cols_to_merge:
                 ws1.merge_cells(start_row=start_row, start_column=col_idx, end_row=end_row, end_column=col_idx)
                 for r_idx in range(start_row, end_row + 1):
                     cell = ws1.cell(row=r_idx, column=col_idx)
-                    cell.alignment = Alignment(horizontal='center' if col_idx in (1, 13, 14) else 'left', vertical='center', wrap_text=True)
+                    cell.alignment = Alignment(horizontal='center' if col_idx in (1, 2, 3, 6, 7, 15, 16) else 'left', vertical='center', wrap_text=True)
         current_row += num_items
     ws1.freeze_panes = 'A3'
     ws2 = wb.create_sheet(title='📦 Ombor Qoldiqlari')
@@ -1121,14 +1182,23 @@ async def export_requests_to_excel():
     ws2.freeze_panes = 'A3'
     ws3 = wb.create_sheet(title='📥 Kirimlar (Prixod)')
     ws3.sheet_view.showGridLines = False
-    ws3.merge_cells('A1:F1')
+    ws3.merge_cells('A1:H1')
     title3 = ws3['A1']
     title3.value = 'OMBORGA KIRIM QILINGAN TOVARLAR (PRIXOD)'
     title3.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
     title3.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
     title3.alignment = Alignment(horizontal='center', vertical='center')
     ws3.row_dimensions[1].height = 26
-    tx_headers = [('T/r', 6), ('Mahsulot Nomi', 35), ('Miqdori (dona)', 18), ("Mas'ul Xodim", 28), ('Zayavka ID', 15), ('Sana / Vaqt', 22)]
+    tx_headers = [
+        ('T/r', 6), 
+        ('Moshina Raqami', 18),
+        ('Haydovchi Ismi', 22),
+        ('Mahsulot Nomi', 35), 
+        ('Miqdori (dona)', 18), 
+        ('Sana / Vaqt', 22), 
+        ('Zayavka ID', 15), 
+        ("Mas'ul Xodim", 28)
+    ]
     for col_idx, (hdr, width) in enumerate(tx_headers, start=1):
         cell = ws3.cell(row=2, column=col_idx)
         header_style(cell, hdr)
@@ -1136,7 +1206,16 @@ async def export_requests_to_excel():
     ws3.row_dimensions[2].height = 34
     async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'prixod'\n            ORDER BY t.id DESC\n        ")
+            await cursor.execute('''
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at,
+                   r.vehicle_name, v.driver_name
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            LEFT JOIN requests r ON t.request_id = r.id
+            LEFT JOIN vehicles v ON r.vehicle_name = v.name
+            WHERE t.type = 'prixod'
+            ORDER BY t.id DESC
+        ''')
             prixod_rows = await cursor.fetchall()
     processed_prixod_rows = []
     for tx in prixod_rows:
@@ -1160,36 +1239,54 @@ async def export_requests_to_excel():
         num_cell.alignment = Alignment(horizontal='center', vertical='center')
         num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         num_cell.border = thin_border()
-        name_cell = ws3.cell(row=idx, column=2, value=r['item_name'])
+        
+        veh_cell = ws3.cell(row=idx, column=2, value=r.get('vehicle_name') or '—')
+        veh_cell.font = Font(name='Calibri', size=10)
+        veh_cell.alignment = Alignment(horizontal='center', vertical='center')
+        veh_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        veh_cell.border = thin_border()
+        
+        drv_cell = ws3.cell(row=idx, column=3, value=r.get('driver_name') or '—')
+        drv_cell.font = Font(name='Calibri', size=10)
+        drv_cell.alignment = Alignment(horizontal='left', vertical='center')
+        drv_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        drv_cell.border = thin_border()
+        
+        name_cell = ws3.cell(row=idx, column=4, value=r['item_name'])
         name_cell.font = Font(name='Calibri', size=10)
         name_cell.alignment = Alignment(horizontal='left', vertical='center')
         name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         name_cell.border = thin_border()
-        qty_cell = ws3.cell(row=idx, column=3, value=r['quantity'])
+        
+        qty_cell = ws3.cell(row=idx, column=5, value=r['quantity'])
         qty_cell.font = Font(name='Calibri', size=10, bold=True)
         qty_cell.alignment = Alignment(horizontal='center', vertical='center')
         qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         qty_cell.border = thin_border()
-        user_cell = ws3.cell(row=idx, column=4, value=r['user_name'] or 'Avtomatik / Tizim')
-        user_cell.font = Font(name='Calibri', size=10)
-        user_cell.alignment = Alignment(horizontal='left', vertical='center')
-        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        user_cell.border = thin_border()
-        req_cell = ws3.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else '—')
-        req_cell.font = Font(name='Calibri', size=10)
-        req_cell.alignment = Alignment(horizontal='center', vertical='center')
-        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        req_cell.border = thin_border()
+        
         date_cell = ws3.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         date_cell.border = thin_border()
+        
+        req_cell = ws3.cell(row=idx, column=7, value=r['request_id'] if r['request_id'] else '—')
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+        
+        user_cell = ws3.cell(row=idx, column=8, value=r['user_name'] or 'Avtomatik / Tizim')
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+        
         ws3.row_dimensions[idx].height = 20
     ws3.freeze_panes = 'A3'
     ws4 = wb.create_sheet(title='📤 Chiqimlar (Rasxod)')
     ws4.sheet_view.showGridLines = False
-    ws4.merge_cells('A1:F1')
+    ws4.merge_cells('A1:H1')
     title4 = ws4['A1']
     title4.value = 'OMBORDAN CHIQARILGAN TOVARLAR (RASXOD)'
     title4.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
@@ -1203,7 +1300,16 @@ async def export_requests_to_excel():
     ws4.row_dimensions[2].height = 34
     async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'rasxod'\n            ORDER BY t.id DESC\n        ")
+            await cursor.execute('''
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at,
+                   r.vehicle_name, v.driver_name
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            LEFT JOIN requests r ON t.request_id = r.id
+            LEFT JOIN vehicles v ON r.vehicle_name = v.name
+            WHERE t.type = 'rasxod'
+            ORDER BY t.id DESC
+        ''')
             rasxod_rows = await cursor.fetchall()
     processed_rasxod_rows = []
     for tx in rasxod_rows:
@@ -1227,34 +1333,53 @@ async def export_requests_to_excel():
         num_cell.alignment = Alignment(horizontal='center', vertical='center')
         num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         num_cell.border = thin_border()
-        name_cell = ws4.cell(row=idx, column=2, value=r['item_name'])
+        
+        veh_cell = ws4.cell(row=idx, column=2, value=r.get('vehicle_name') or '—')
+        veh_cell.font = Font(name='Calibri', size=10)
+        veh_cell.alignment = Alignment(horizontal='center', vertical='center')
+        veh_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        veh_cell.border = thin_border()
+        
+        drv_cell = ws4.cell(row=idx, column=3, value=r.get('driver_name') or '—')
+        drv_cell.font = Font(name='Calibri', size=10)
+        drv_cell.alignment = Alignment(horizontal='left', vertical='center')
+        drv_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        drv_cell.border = thin_border()
+        
+        name_cell = ws4.cell(row=idx, column=4, value=r['item_name'])
         name_cell.font = Font(name='Calibri', size=10)
         name_cell.alignment = Alignment(horizontal='left', vertical='center')
         name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         name_cell.border = thin_border()
-        qty_cell = ws4.cell(row=idx, column=3, value=r['quantity'])
+        
+        qty_cell = ws4.cell(row=idx, column=5, value=r['quantity'])
         qty_cell.font = Font(name='Calibri', size=10, bold=True)
         qty_cell.alignment = Alignment(horizontal='center', vertical='center')
         qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         qty_cell.border = thin_border()
-        user_cell = ws4.cell(row=idx, column=4, value=r['user_name'] or 'Avtomatik / Tizim')
-        user_cell.font = Font(name='Calibri', size=10)
-        user_cell.alignment = Alignment(horizontal='left', vertical='center')
-        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        user_cell.border = thin_border()
-        req_cell = ws4.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else '—')
-        req_cell.font = Font(name='Calibri', size=10)
-        req_cell.alignment = Alignment(horizontal='center', vertical='center')
-        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        req_cell.border = thin_border()
+        
         date_cell = ws4.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         date_cell.border = thin_border()
+        
+        req_cell = ws4.cell(row=idx, column=7, value=r['request_id'] if r['request_id'] else '—')
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+        
+        user_cell = ws4.cell(row=idx, column=8, value=r['user_name'] or 'Avtomatik / Tizim')
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+        
         ws4.row_dimensions[idx].height = 20
     ws4.freeze_panes = 'A3'
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')
+    uz_tz = datetime.timezone(datetime.timedelta(hours=5))
+    timestamp = datetime.datetime.now(uz_tz).strftime('%Y-%m-%d_%H-%M')
     file_path = f'MO_Butlash_Hisobot_{timestamp}.xlsx'
     wb.save(file_path)
     return file_path
@@ -1280,7 +1405,8 @@ async def export_daily_report_to_excel():
     def thin_border():
         side = Side(style='thin', color=COLOR_BORDER)
         return Border(left=side, right=side, top=side, bottom=side)
-    today_str = datetime.date.today().isoformat()
+    uz_tz = datetime.timezone(datetime.timedelta(hours=5))
+    today_str = datetime.datetime.now(uz_tz).date().isoformat()
     ws1 = wb.active
     ws1.title = '📦 Ombor Qoldiqlari'
     ws1.sheet_view.showGridLines = False
@@ -1352,14 +1478,23 @@ async def export_daily_report_to_excel():
     ws1.freeze_panes = 'A3'
     ws2 = wb.create_sheet(title='📥 Bugungi Kirimlar (Prixod)')
     ws2.sheet_view.showGridLines = False
-    ws2.merge_cells('A1:F1')
+    ws2.merge_cells('A1:H1')
     title2 = ws2['A1']
     title2.value = f'BUGUNGI KIRIM QILINGAN TOVARLAR ({today_str})'
     title2.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
     title2.fill = PatternFill(fill_type='solid', fgColor=COLOR_TITLE_BG)
     title2.alignment = Alignment(horizontal='center', vertical='center')
     ws2.row_dimensions[1].height = 26
-    tx_headers = [('T/r', 6), ('Mahsulot Nomi', 35), ('Miqdori (dona)', 18), ("Mas'ul Xodim", 28), ('Zayavka ID', 15), ('Sana / Vaqt', 22)]
+    tx_headers = [
+        ('T/r', 6), 
+        ('Moshina Raqami', 18),
+        ('Haydovchi Ismi', 22),
+        ('Mahsulot Nomi', 35), 
+        ('Miqdori (dona)', 18), 
+        ('Sana / Vaqt', 22), 
+        ('Zayavka ID', 15), 
+        ("Mas'ul Xodim", 28)
+    ]
     for col_idx, (hdr, width) in enumerate(tx_headers, start=1):
         cell = ws2.cell(row=2, column=col_idx)
         header_style(cell, hdr)
@@ -1367,7 +1502,16 @@ async def export_daily_report_to_excel():
     ws2.row_dimensions[2].height = 34
     async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'prixod' AND CAST(t.created_at AS TEXT) LIKE %s\n            ORDER BY t.id DESC\n        ", (f'{today_str}%',))
+            await cursor.execute('''
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at,
+                   r.vehicle_name, v.driver_name
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            LEFT JOIN requests r ON t.request_id = r.id
+            LEFT JOIN vehicles v ON r.vehicle_name = v.name
+            WHERE t.type = 'prixod' AND CAST(t.created_at + INTERVAL '5 hours' AS TEXT) LIKE %s
+            ORDER BY t.id DESC
+        ''', (f'{today_str}%',))
             prixod_rows = await cursor.fetchall()
     processed_prixod_rows = []
     for tx in prixod_rows:
@@ -1391,36 +1535,54 @@ async def export_daily_report_to_excel():
         num_cell.alignment = Alignment(horizontal='center', vertical='center')
         num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         num_cell.border = thin_border()
-        name_cell = ws2.cell(row=idx, column=2, value=r['item_name'])
+        
+        veh_cell = ws2.cell(row=idx, column=2, value=r.get('vehicle_name') or '—')
+        veh_cell.font = Font(name='Calibri', size=10)
+        veh_cell.alignment = Alignment(horizontal='center', vertical='center')
+        veh_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        veh_cell.border = thin_border()
+        
+        drv_cell = ws2.cell(row=idx, column=3, value=r.get('driver_name') or '—')
+        drv_cell.font = Font(name='Calibri', size=10)
+        drv_cell.alignment = Alignment(horizontal='left', vertical='center')
+        drv_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        drv_cell.border = thin_border()
+        
+        name_cell = ws2.cell(row=idx, column=4, value=r['item_name'])
         name_cell.font = Font(name='Calibri', size=10)
         name_cell.alignment = Alignment(horizontal='left', vertical='center')
         name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         name_cell.border = thin_border()
-        qty_cell = ws2.cell(row=idx, column=3, value=r['quantity'])
+        
+        qty_cell = ws2.cell(row=idx, column=5, value=r['quantity'])
         qty_cell.font = Font(name='Calibri', size=10, bold=True)
         qty_cell.alignment = Alignment(horizontal='center', vertical='center')
         qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         qty_cell.border = thin_border()
-        user_cell = ws2.cell(row=idx, column=4, value=r['user_name'] or 'Avtomatik / Tizim')
-        user_cell.font = Font(name='Calibri', size=10)
-        user_cell.alignment = Alignment(horizontal='left', vertical='center')
-        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        user_cell.border = thin_border()
-        req_cell = ws2.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else '—')
-        req_cell.font = Font(name='Calibri', size=10)
-        req_cell.alignment = Alignment(horizontal='center', vertical='center')
-        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        req_cell.border = thin_border()
+        
         date_cell = ws2.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         date_cell.border = thin_border()
+        
+        req_cell = ws2.cell(row=idx, column=7, value=r['request_id'] if r['request_id'] else '—')
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+        
+        user_cell = ws2.cell(row=idx, column=8, value=r['user_name'] or 'Avtomatik / Tizim')
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+        
         ws2.row_dimensions[idx].height = 20
     ws2.freeze_panes = 'A3'
     ws3 = wb.create_sheet(title='📤 Bugungi Chiqimlar (Rasxod)')
     ws3.sheet_view.showGridLines = False
-    ws3.merge_cells('A1:F1')
+    ws3.merge_cells('A1:H1')
     title3 = ws3['A1']
     title3.value = f'BUGUNGI CHIQARILGAN TOVARLAR ({today_str})'
     title3.font = Font(name='Calibri', bold=True, size=13, color=COLOR_HEADER_FONT)
@@ -1434,7 +1596,16 @@ async def export_daily_report_to_excel():
     ws3.row_dimensions[2].height = 34
     async with db_pool.connection() as db:
         async with db.cursor() as cursor:
-            await cursor.execute("\n            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at\n            FROM stock_transactions t\n            LEFT JOIN users u ON t.user_id = u.telegram_id\n            WHERE t.type = 'rasxod' AND CAST(t.created_at AS TEXT) LIKE %s\n            ORDER BY t.id DESC\n        ", (f'{today_str}%',))
+            await cursor.execute('''
+            SELECT t.item_name, t.quantity, u.full_name as user_name, t.request_id, t.created_at,
+                   r.vehicle_name, v.driver_name
+            FROM stock_transactions t
+            LEFT JOIN users u ON t.user_id = u.telegram_id
+            LEFT JOIN requests r ON t.request_id = r.id
+            LEFT JOIN vehicles v ON r.vehicle_name = v.name
+            WHERE t.type = 'rasxod' AND CAST(t.created_at + INTERVAL '5 hours' AS TEXT) LIKE %s
+            ORDER BY t.id DESC
+        ''', (f'{today_str}%',))
             rasxod_rows = await cursor.fetchall()
     processed_rasxod_rows = []
     for tx in rasxod_rows:
@@ -1458,34 +1629,52 @@ async def export_daily_report_to_excel():
         num_cell.alignment = Alignment(horizontal='center', vertical='center')
         num_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         num_cell.border = thin_border()
-        name_cell = ws3.cell(row=idx, column=2, value=r['item_name'])
+        
+        veh_cell = ws3.cell(row=idx, column=2, value=r.get('vehicle_name') or '—')
+        veh_cell.font = Font(name='Calibri', size=10)
+        veh_cell.alignment = Alignment(horizontal='center', vertical='center')
+        veh_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        veh_cell.border = thin_border()
+        
+        drv_cell = ws3.cell(row=idx, column=3, value=r.get('driver_name') or '—')
+        drv_cell.font = Font(name='Calibri', size=10)
+        drv_cell.alignment = Alignment(horizontal='left', vertical='center')
+        drv_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        drv_cell.border = thin_border()
+        
+        name_cell = ws3.cell(row=idx, column=4, value=r['item_name'])
         name_cell.font = Font(name='Calibri', size=10)
         name_cell.alignment = Alignment(horizontal='left', vertical='center')
         name_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         name_cell.border = thin_border()
-        qty_cell = ws3.cell(row=idx, column=3, value=r['quantity'])
+        
+        qty_cell = ws3.cell(row=idx, column=5, value=r['quantity'])
         qty_cell.font = Font(name='Calibri', size=10, bold=True)
         qty_cell.alignment = Alignment(horizontal='center', vertical='center')
         qty_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         qty_cell.border = thin_border()
-        user_cell = ws3.cell(row=idx, column=4, value=r['user_name'] or 'Avtomatik / Tizim')
-        user_cell.font = Font(name='Calibri', size=10)
-        user_cell.alignment = Alignment(horizontal='left', vertical='center')
-        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        user_cell.border = thin_border()
-        req_cell = ws3.cell(row=idx, column=5, value=r['request_id'] if r['request_id'] else '—')
-        req_cell.font = Font(name='Calibri', size=10)
-        req_cell.alignment = Alignment(horizontal='center', vertical='center')
-        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
-        req_cell.border = thin_border()
+        
         date_cell = ws3.cell(row=idx, column=6, value=format_datetime(r['created_at']))
         date_cell.font = Font(name='Calibri', size=10)
         date_cell.alignment = Alignment(horizontal='center', vertical='center')
         date_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
         date_cell.border = thin_border()
+        
+        req_cell = ws3.cell(row=idx, column=7, value=r['request_id'] if r['request_id'] else '—')
+        req_cell.font = Font(name='Calibri', size=10)
+        req_cell.alignment = Alignment(horizontal='center', vertical='center')
+        req_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        req_cell.border = thin_border()
+        
+        user_cell = ws3.cell(row=idx, column=8, value=r['user_name'] or 'Avtomatik / Tizim')
+        user_cell.font = Font(name='Calibri', size=10)
+        user_cell.alignment = Alignment(horizontal='left', vertical='center')
+        user_cell.fill = PatternFill(fill_type='solid', fgColor=bg)
+        user_cell.border = thin_border()
+        
         ws3.row_dimensions[idx].height = 20
     ws3.freeze_panes = 'A3'
-    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')
+    timestamp = datetime.datetime.now(uz_tz).strftime('%Y-%m-%d_%H-%M')
     file_path = f'MO_Kunlik_Hisobot_{timestamp}.xlsx'
     wb.save(file_path)
     return file_path

@@ -107,7 +107,7 @@ router.get("/download-report", async (req, res) => {
     const rows = botEvents.map((e, index) => ({
       "T/r": index + 1,
       "ID": e.id,
-      "Сана / Вақт": e.timeFormatted,
+      "Сана / Вақт": new Date(e.timestamp).toLocaleString("uz-UZ", { timeZone: "Asia/Tashkent" }),
       "Роль / Lavozim": e.role,
       "Фойдаланувчи": e.username,
       "Ходим исми": e.fullName,

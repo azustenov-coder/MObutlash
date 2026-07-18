@@ -101,6 +101,8 @@ class MainMenuStateResetMiddleware(BaseMiddleware):
             state = data.get("state")
             if state is not None:
                 await state.clear()
+                # Clear the cached state string so state filters do not match
+                data["raw_state"] = None
         return await handler(event, data)
  
  

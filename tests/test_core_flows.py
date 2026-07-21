@@ -158,6 +158,20 @@ class PerformancePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[5], {"type": "purchase", "name": "bendeks", "qty": 1, "vehicle": "Pagrushi 3"})
         self.assertEqual(result[6], {"type": "purchase", "name": "Chakman bendeks", "qty": 2, "vehicle": "491"})
 
+    def test_bulk_request_manage_keyboard(self):
+        from handlers.common import get_bulk_request_manage_keyboard
+        markup = get_bulk_request_manage_keyboard(12345)
+        self.assertTrue(markup.inline_keyboard)
+        row1 = markup.inline_keyboard[0]
+        self.assertEqual(row1[0].text, "Ҳаммасини тасдиқлаш ✅")
+        self.assertEqual(row1[0].callback_data, "bulk_approve_12345")
+        self.assertEqual(row1[1].text, "Ҳаммасини рад etish ❌")
+        self.assertEqual(row1[1].callback_data, "bulk_reject_12345")
+        
+        row2 = markup.inline_keyboard[1]
+        self.assertEqual(row2[0].text, "Ҳаммасини қайта ишлашга 🔄")
+        self.assertEqual(row2[0].callback_data, "bulk_revision_12345")
+
 
 if __name__ == "__main__":
     unittest.main()

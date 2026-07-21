@@ -74,6 +74,7 @@ async def init_db():
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_name TEXT")
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_phone TEXT")
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_model TEXT")
+        await db.execute("ALTER TABLE requests ADD COLUMN IF NOT EXISTS batch_id INTEGER")
         # Hot-path indexes used by role menus and request workflow filters.
         await db.execute("CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_requests_creator_status ON requests(created_by, status)")
@@ -223,6 +224,19 @@ async def create_request(created_by: int, description: str, vehicle_name: str=No
         row = await cursor.fetchone()
         await db.commit()
         return row['id']
+
+async def set_request_batch_id(request_id: int, batch_id: int):
+    global db_pool
+    async with db_pool.connection() as db:
+        await db.execute("UPDATE requests SET batch_id = %s WHERE id = %s", (batch_id, request_id))
+        await db.commit()
+
+async def get_requests_by_batch(batch_id: int):
+    global db_pool
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            await cursor.execute("\n            SELECT r.*, \n                   u.full_name as creator_name, u.phone as creator_phone\n            FROM requests r\n            LEFT JOIN users u ON r.created_by = u.telegram_id\n            WHERE r.batch_id = %s\n        ", (batch_id,))
+            return await cursor.fetchall()
 
 async def get_request(request_id: int):
     global db_pool

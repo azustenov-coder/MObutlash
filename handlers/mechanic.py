@@ -4,7 +4,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 import database as db
 import re
-from handlers.common import get_main_keyboard, get_user_main_keyboard, get_request_manage_keyboard, get_mechanic_install_keyboard, get_mechanic_pickup_keyboard, refresh_vehicle_cache
+from handlers.common import get_main_keyboard, get_user_main_keyboard, get_request_manage_keyboard, get_bulk_request_manage_keyboard, get_mechanic_install_keyboard, get_mechanic_pickup_keyboard, refresh_vehicle_cache
 from handlers.controller import STATUS_LABELS, send_installation_photo
 
 router = Router()
@@ -746,6 +746,7 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
             except Exception as e:
                 print(f"Admin {admin['telegram_id']}ni ogohlantirishda xato: {e}")
     else:
+        batch_id = None
         for item in temp_items:
             item_type = item['type']
             item_vehicle = item.get('vehicle', vehicle_name)
@@ -764,6 +765,11 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
                 request_type=item_type
             )
             
+            if batch_id is None:
+                batch_id = request_id
+                
+            await db.set_request_batch_id(request_id, batch_id)
+            
             await db.add_request_item(
                 request_id=request_id,
                 item_name=f"{prefix}{item['name']}",
@@ -776,24 +782,55 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
                 vehicle_requests[item_vehicle] = []
             vehicle_requests[item_vehicle].append(f"№{request_id} ({item['name']})")
             
-            admin_prefix = f"🔔 <b>Янги заявка тасдиқлаш uchun keldi! (№{request_id})</b>\n\n"
+        managers = await db.get_users_by_role('manager')
+        super_admins = await db.get_users_by_role('super_admin')
+        observers = await db.get_users_by_role('observer')
+        all_admins = list(managers) + list(super_admins) + list(observers)
+        
+        if len(temp_items) == 1:
+            rid = created_request_ids[0]
+            item = temp_items[0]
+            item_type = item['type']
+            item_vehicle = item.get('vehicle', vehicle_name)
+            
+            admin_prefix = f"🔔 <b>Янги заявка тасдиқлаш uchun keldi! (№{rid})</b>\n\n"
             summary_text = (
-                f"📝 <b>Заявка №{request_id} яратилdi va tasdiqlashga yuborildi!</b>\n\n"
+                f"📝 <b>Заявка №{rid} яратилdi va tasdiqlashga yuborildi!</b>\n\n"
                 f"🚗 <b>Машина:</b> {item_vehicle}\n"
                 f"👤 <b>Юборувчи:</b> {user['full_name']}\n\n"
                 f"📋 <b>Заявка таркиби:</b>\n"
                 f"   1. " + ("🛠 [Таъмирлаш] " if item_type == 'repair' else "🛒 [Сотиб олиш] ") + f"{item['name']} — {item['qty']} та\n"
             )
             
-            managers = await db.get_users_by_role('manager')
-            super_admins = await db.get_users_by_role('super_admin')
-            observers = await db.get_users_by_role('observer')
-            all_admins = list(managers) + list(super_admins) + list(observers)
             for admin in all_admins:
                 try:
                     from main import bot
-                    kb = get_request_manage_keyboard(request_id)
+                    kb = get_request_manage_keyboard(rid)
                     msg_text = admin_prefix + summary_text
+                    if photo_id:
+                        await bot.send_photo(admin['telegram_id'], photo=photo_id, caption=msg_text, reply_markup=kb, parse_mode="HTML")
+                    else:
+                        await bot.send_message(admin['telegram_id'], text=msg_text, reply_markup=kb, parse_mode="HTML")
+                except Exception as e:
+                    print(f"Admin {admin['telegram_id']}ni ogohlantirishda xato: {e}")
+        else:
+            bulk_prefix = f"🔔 <b>Янги пакетли заявка тасдиқлаш учун келди! (Пакет №{batch_id})</b>\n\n"
+            bulk_summary = (
+                f"🚗 <b>Машиналар ва сўралган маҳсулотлар:</b>\n"
+            )
+            for idx, (item, rid) in enumerate(zip(temp_items, created_request_ids), start=1):
+                item_vehicle = item.get('vehicle', vehicle_name)
+                item_type = item['type']
+                type_prefix = "🛠 [Таъмирлаш] " if item_type == 'repair' else "🛒 [Сотиб олиш] "
+                bulk_summary += f"   {idx}. [№{rid}] <b>{item_vehicle}</b> учун: {type_prefix}{item['name']} — {item['qty']} та\n"
+                
+            bulk_summary += f"\n👤 <b>Юборувчи:</b> {user['full_name']}\n"
+            
+            for admin in all_admins:
+                try:
+                    from main import bot
+                    kb = get_bulk_request_manage_keyboard(batch_id)
+                    msg_text = bulk_prefix + bulk_summary
                     if photo_id:
                         await bot.send_photo(admin['telegram_id'], photo=photo_id, caption=msg_text, reply_markup=kb, parse_mode="HTML")
                     else:

@@ -600,6 +600,17 @@ def get_request_manage_keyboard(request_id: int):
         ]
     ])
 
+def get_bulk_request_manage_keyboard(batch_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Ҳаммасини тасдиқлаш ✅", callback_data=f"bulk_approve_{batch_id}"),
+            InlineKeyboardButton(text="Ҳаммасини рад etish ❌", callback_data=f"bulk_reject_{batch_id}")
+        ],
+        [
+            InlineKeyboardButton(text="Ҳаммасини қайта ишлашга 🔄", callback_data=f"bulk_revision_{batch_id}")
+        ]
+    ])
+
 # Mexanik o'rnatilgan zapchast rasmini yuklashi uchun tugma
 def get_mechanic_install_keyboard(request_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[

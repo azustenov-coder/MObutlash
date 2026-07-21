@@ -44,7 +44,8 @@ SCHEMA = [
         quantity_used INTEGER,
         quantity_left INTEGER,
         request_type TEXT DEFAULT 'repair',
-        price REAL DEFAULT 0.0
+        price REAL DEFAULT 0.0,
+        batch_id INTEGER
     )
     """,
     """

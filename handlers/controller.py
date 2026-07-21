@@ -158,6 +158,135 @@ async def list_pending_requests(message: Message):
             parse_mode="HTML"
         )
 
+@router.callback_query(F.data.startswith("bulk_approve_"))
+async def bulk_approve_request(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
+        await callback.answer("Сизда заявкаларни тасдиқлаш ҳуқуқи йўқ!", show_alert=True)
+        return
+        
+    batch_id = int(callback.data.split("_")[2])
+    requests = await db.get_requests_by_batch(batch_id)
+    if not requests:
+        await callback.answer("Заявкалар топилмади.")
+        await callback.message.delete()
+        return
+        
+    pending_reqs = [r for r in requests if r['status'] in ['pending_approval', 'pending_admin_approval']]
+    if not pending_reqs:
+        await callback.answer("Ушбу пакетдаги барча заявкалар аллақачон кўриб чиқилган!", show_alert=True)
+        await callback.message.delete()
+        return
+        
+    approved_count = 0
+    role_label = user['role']
+    for req in pending_reqs:
+        target_status = get_approval_target_status(req.get('request_type'))
+        await db.update_request_status(req['id'], target_status, callback.from_user.id, role_label)
+        approved_count += 1
+        
+    await callback.answer(f"Пакетдаги {approved_count} та заявка муваффақиятли тасдиқланди.")
+    
+    role_display = {
+        'super_admin': "Супер Админ 👑",
+        'manager': "Бошқарувчи 💼",
+        'observer': "Бошқарувчи 2 💼",
+    }[user['role']]
+    
+    summary = (
+        f"✅ <b>Пакет №{batch_id} даги барча заявкалар ({approved_count} та) {role_display} томонидан тасдиқланди!</b>\n"
+        f"👤 <b>Тасдиқлади:</b> {user['full_name']}\n"
+    )
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=summary, reply_markup=None, parse_mode="HTML")
+    else:
+        await callback.message.edit_text(text=summary, reply_markup=None, parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("bulk_reject_"))
+async def bulk_reject_request(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
+        await callback.answer("Сизда рад etish huquqi yo'q!", show_alert=True)
+        return
+        
+    batch_id = int(callback.data.split("_")[2])
+    requests = await db.get_requests_by_batch(batch_id)
+    if not requests:
+        await callback.answer("Заявкалар топилмади.")
+        await callback.message.delete()
+        return
+        
+    pending_reqs = [r for r in requests if r['status'] in ['pending_approval', 'pending_admin_approval']]
+    if not pending_reqs:
+        await callback.answer("Ушбу пакетдаги барча заявкалар аллақачон кўриб чиқилган!", show_alert=True)
+        await callback.message.delete()
+        return
+        
+    role_label = user['role']
+    for req in pending_reqs:
+        await db.update_request_status(req['id'], 'rejected', callback.from_user.id, role_label)
+        
+    await callback.answer("Пакетдаги барча заявкалар рад etildi.")
+    
+    role_display = {
+        'super_admin': "Супер Админ 👑",
+        'manager': "Бошқарувчи 💼",
+        'observer': "Бошқарувчи 2 💼",
+    }[user['role']]
+    
+    summary = (
+        f"❌ <b>Пакет №{batch_id} даги барча заявкалар {role_display} томонидан рад etildi!</b>\n"
+        f"👤 <b>Рад этди:</b> {user['full_name']}\n"
+    )
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=summary, reply_markup=None, parse_mode="HTML")
+    else:
+        await callback.message.edit_text(text=summary, reply_markup=None, parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("bulk_revision_"))
+async def bulk_revision_request(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
+        await callback.answer("Сизда қайта ишлашга юбориш ҳуқуқи йўқ!", show_alert=True)
+        return
+        
+    batch_id = int(callback.data.split("_")[2])
+    requests = await db.get_requests_by_batch(batch_id)
+    if not requests:
+        await callback.answer("Заявкалар топилмади.")
+        await callback.message.delete()
+        return
+        
+    pending_reqs = [r for r in requests if r['status'] in ['pending_approval', 'pending_admin_approval']]
+    if not pending_reqs:
+        await callback.answer("Ушбу пакетдаги барча заявкалар аллақачон кўриб чиқилган!", show_alert=True)
+        await callback.message.delete()
+        return
+        
+    role_label = user['role']
+    for req in pending_reqs:
+        await db.update_request_status(req['id'], 'revision', callback.from_user.id, role_label)
+        
+    await callback.answer("Пакетдаги барча заявкалар қайта ишлашга юборилди.")
+    
+    role_display = {
+        'super_admin': "Супер Админ 👑",
+        'manager': "Бошқарувчи 💼",
+        'observer': "Бошқарувчи 2 💼",
+    }[user['role']]
+    
+    summary = (
+        f"🔄 <b>Пакет №{batch_id} даги барча заявкалар {role_display} томонидан қайта ишлашга юборилди!</b>\n"
+        f"👤 <b>Юборди:</b> {user['full_name']}\n"
+    )
+    
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=summary, reply_markup=None, parse_mode="HTML")
+    else:
+        await callback.message.edit_text(text=summary, reply_markup=None, parse_mode="HTML")
+
 @router.callback_query(F.data.startswith("req_approve_"))
 async def approve_request(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)

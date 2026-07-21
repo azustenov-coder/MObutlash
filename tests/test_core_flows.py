@@ -136,6 +136,28 @@ class PerformancePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[6], {"type": "purchase", "name": "тяга тепа past orqaga", "qty": 6})
         self.assertEqual(result[7], {"type": "purchase", "name": "литол 5кг", "qty": 1})
 
+    async def test_smart_vehicle_splitting_and_loaders(self):
+        text = (
+            "Vozdux filtr 3250.   5 ta 491.499.494.480.492.\n"
+            "Pagrushi 3 ga bendeks 1 ta\n"
+            "Chakman bendeks 2 ta"
+        )
+        result = await parse_request_text(text, default_vehicle="491")
+        self.assertEqual(len(result), 7)
+        
+        for i in range(5):
+            self.assertEqual(result[i]["name"], "Vozdux filtr 3250")
+            self.assertEqual(result[i]["qty"], 1)
+            self.assertEqual(result[i]["type"], "purchase")
+        self.assertEqual(result[0]["vehicle"], "491")
+        self.assertEqual(result[1]["vehicle"], "499")
+        self.assertEqual(result[2]["vehicle"], "494")
+        self.assertEqual(result[3]["vehicle"], "480")
+        self.assertEqual(result[4]["vehicle"], "492")
+        
+        self.assertEqual(result[5], {"type": "purchase", "name": "bendeks", "qty": 1, "vehicle": "Pagrushi 3"})
+        self.assertEqual(result[6], {"type": "purchase", "name": "Chakman bendeks", "qty": 2, "vehicle": "491"})
+
 
 if __name__ == "__main__":
     unittest.main()

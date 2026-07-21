@@ -278,6 +278,17 @@ async def get_all_vehicles():
             rows = await cursor.fetchall()
             return [row['name'] for row in rows]
 
+async def ensure_vehicle_exists(name: str):
+    global db_pool
+    async with db_pool.connection() as db:
+        await db.execute(
+            """INSERT INTO vehicles (name, status)
+               VALUES (%s, 'soz')
+               ON CONFLICT (name) DO NOTHING""",
+            (name.strip(),)
+        )
+        await db.commit()
+
 async def update_vehicle_status(name: str, status: str, reason: str=None):
     global db_pool
     async with db_pool.connection() as db:

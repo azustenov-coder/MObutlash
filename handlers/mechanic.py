@@ -40,13 +40,21 @@ def get_vehicles_inline_keyboard(vehicles_list, list_type: str = "all"):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 # Local request parser
-async def parse_request_text(text: str) -> list:
-    return parse_with_regex(text)
+async def parse_request_text(text: str, default_vehicle: str = None) -> list:
+    return await parse_with_smart_vehicles(text, default_vehicle)
 
-def parse_with_regex(text: str) -> list:
+async def parse_with_smart_vehicles(text: str, default_vehicle: str = None) -> list:
     import re
     items = []
-    units_pattern = r'(?:ta|та|dona|дона|shtuk|штук|шт|шт\.|d|x|\*|-)'
+    units_pattern = r'\b(\d+)\s*(?:ta|та|dona|дона|shtuk|штук|шт|шт\.|d|x|\*|-)\b'
+    
+    try:
+        db_vehicles = await db.get_all_vehicles()
+    except Exception:
+        db_vehicles = []
+        
+    predefined = ['102', '103', '106', '107', '108', '109', '112', '115', '117', '122', '123', '477', '478', '480', '481', '482', '484', '485', '488', '491', '492', '493', '494', '497', '615', '617', '499', '489', '487', '124', '125', '126', '127', '9154', '9155', '9156', '9157', '9158', '9159', '361', '362', '364', '809', '810', '961']
+    vehicle_pool = list(set(db_vehicles + predefined))
     
     for line in text.split('\n'):
         line = line.strip()
@@ -55,49 +63,100 @@ def parse_with_regex(text: str) -> list:
             
         normalized = line.lower()
         
-        # 1. Try Pattern A: starts with quantity
-        pattern_a = r'^(\d+)\s*' + units_pattern + r'?\s+(.+)$'
-        match_a = re.match(pattern_a, normalized)
-        if match_a:
-            qty_str, name_str = match_a.groups()
-            name = name_str.strip().strip(',.;- \t')
-            qty = int(qty_str)
-            orig_name = line[match_a.start(2):match_a.end(2)].strip().strip(',.;- \t')
-            if orig_name:
-                itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
-                items.append({'type': itype, 'name': orig_name, 'qty': qty})
-                continue
-
-        # 2. Try Pattern B: ends with quantity + unit
-        pattern_b = r'^(.+?)\s+(\d+)\s*' + units_pattern + r'$'
-        match_b = re.match(pattern_b, normalized)
-        if match_b:
-            name_str, qty_str = match_b.groups()
-            name = name_str.strip().strip(',.;- \t')
-            qty = int(qty_str)
-            orig_name = line[match_b.start(1):match_b.end(1)].strip().strip(',.;- \t')
-            if orig_name:
-                itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
-                items.append({'type': itype, 'name': orig_name, 'qty': qty})
-                continue
-
-        # 3. Try Pattern C: ends with quantity only (space + number)
-        pattern_c = r'^(.+?)\s+(\d+)$'
-        match_c = re.match(pattern_c, normalized)
-        if match_c:
-            name_str, qty_str = match_c.groups()
-            name = name_str.strip().strip(',.;- \t')
-            qty = int(qty_str)
-            orig_name = line[match_c.start(1):match_c.end(1)].strip().strip(',.;- \t')
-            if orig_name:
-                itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
-                items.append({'type': itype, 'name': orig_name, 'qty': qty})
-                continue
-
-        # 4. Fallback: treat the whole line as the name, qty 1
-        itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
-        items.append({'type': itype, 'name': line, 'qty': 1})
+        # 1. Extract vehicles
+        detected_vehicles = []
         
+        # 1a. Detect loader patterns like "pagrushi 3" or "pagrushik 3"
+        loader_matches = re.findall(r'\bpagrushi[k]?\s*(\d+)\b', normalized)
+        for num in loader_matches:
+            veh_name = f"Pagrushi {num}"
+            if veh_name not in detected_vehicles:
+                detected_vehicles.append(veh_name)
+                
+        # 1b. Detect standard numerical vehicle numbers
+        all_nums = re.findall(r'\d+', normalized)
+        for num in all_nums:
+            if num in vehicle_pool and num not in detected_vehicles:
+                detected_vehicles.append(num)
+                
+        # 2. Find and extract quantity (using the original casing of the line)
+        qty = None
+        qty_match = re.search(units_pattern, line, flags=re.IGNORECASE)
+        if qty_match:
+            qty = int(qty_match.group(1))
+            line_no_qty = line[:qty_match.start()] + ' ' + line[qty_match.end():]
+        else:
+            last_num_match = re.search(r'\b(\d+)\b\s*$', line)
+            if last_num_match:
+                last_num = last_num_match.group(1)
+                is_veh = (last_num in vehicle_pool) or any(last_num == re.findall(r'\d+', v)[0] for v in detected_vehicles if re.findall(r'\d+', v))
+                if not is_veh:
+                    qty = int(last_num)
+                    line_no_qty = line[:last_num_match.start()] + ' ' + line[last_num_match.end():]
+                else:
+                    line_no_qty = line
+            else:
+                line_no_qty = line
+                
+        # 3. Clean up vehicle references from the line
+        cleaned_line = line_no_qty
+        
+        # Remove loaders
+        cleaned_line = re.sub(r'\bpagrushi[k]?\s*\d+\b', ' ', cleaned_line, flags=re.IGNORECASE)
+        
+        # Remove vehicle numbers
+        for v in detected_vehicles:
+            if "pagrushi" in v.lower():
+                continue
+            cleaned_line = re.sub(r'\b' + re.escape(v) + r'\b', ' ', cleaned_line, flags=re.IGNORECASE)
+            cleaned_line = re.sub(re.escape(v), ' ', cleaned_line, flags=re.IGNORECASE)
+            
+        # 4. Clean up auxiliary words and punctuation
+        cleaned_line = re.sub(r'\b(ga|va|ва|ga|kp|кп)\b', ' ', cleaned_line, flags=re.IGNORECASE)
+        cleaned_line = re.sub(r'\s+', ' ', cleaned_line)
+        cleaned_line = cleaned_line.strip().strip(',.;- \t')
+        
+        if not cleaned_line:
+            cleaned_line = line
+            
+        cleaned_name = cleaned_line
+        
+        if qty is None:
+            qty = 1
+            
+        # 5. Determine vehicles to assign
+        if detected_vehicles:
+            vehicles_to_assign = detected_vehicles
+        elif default_vehicle:
+            vehicles_to_assign = [default_vehicle]
+        else:
+            vehicles_to_assign = []
+            
+        num_vehs = len(vehicles_to_assign) if vehicles_to_assign else 1
+        
+        # Distribute quantity among vehicles
+        if qty > 1 and qty % num_vehs == 0:
+            qty_per_veh = qty // num_vehs
+        else:
+            qty_per_veh = max(1, qty // num_vehs) if qty > 1 else 1
+            
+        itype = 'repair' if any(word in normalized for word in ['ta\'mirlash', 'tamirlash', 'remont', 'sozlash', 'tuzatish']) else 'purchase'
+        
+        if vehicles_to_assign:
+            for veh in vehicles_to_assign:
+                items.append({
+                    'type': itype,
+                    'name': cleaned_name,
+                    'qty': qty_per_veh,
+                    'vehicle': veh
+                })
+        else:
+            items.append({
+                'type': itype,
+                'name': cleaned_name,
+                'qty': qty_per_veh
+            })
+            
     return items
 
 @router.message(F.text.startswith("Соз ҳолат 🟢") | F.text.in_(["Soz avtolar 🟢", "Соз автолар 🟢", "Соз ҳолат 🟢"]))
@@ -636,14 +695,18 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
     editing_request_id = state_data.get('editing_request_id')
     
     created_request_ids = []
+    vehicle_requests = {}
     
     if editing_request_id:
         item = temp_items[0]
         item_type = item['type']
-        prefix = "Таъмирлаш: " if item_type == 'repair' else ""
-        description = f"Машина: {vehicle_name} | " + (f"Таъмирлаш: {item['name']}" if item_type == 'repair' else f"Сотиб олиш: {item['name']} ({item['qty']} та)")
+        item_vehicle = item.get('vehicle', vehicle_name)
+        await db.ensure_vehicle_exists(item_vehicle)
         
-        await db.update_request_details(editing_request_id, description, vehicle_name, photo_id, qty_used=None, qty_left=None, request_type=item_type)
+        prefix = "Таъмирлаш: " if item_type == 'repair' else ""
+        description = f"Машина: {item_vehicle} | " + (f"Таъмирлаш: {item['name']}" if item_type == 'repair' else f"Сотиб олиш: {item['name']} ({item['qty']} та)")
+        
+        await db.update_request_details(editing_request_id, description, item_vehicle, photo_id, qty_used=None, qty_left=None, request_type=item_type)
         await db.delete_request_items(editing_request_id)
             
         await db.add_request_item(
@@ -654,11 +717,14 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
             quantity_missing=item['qty']
         )
         created_request_ids.append(editing_request_id)
+        if item_vehicle not in vehicle_requests:
+            vehicle_requests[item_vehicle] = []
+        vehicle_requests[item_vehicle].append(f"№{editing_request_id} ({item['name']})")
         
         admin_prefix = f"🔔 <b>Заявка №{editing_request_id} таҳрирланиб, қайта тасдиқлашга келди!</b>\n\n"
         summary_text = (
-            f"📝 <b>Заявка №{editing_request_id} муваффақиятли таҳрирланди ва қайта тасдиқлашга юборилди! 📝</b>\n\n"
-            f"🚗 <b>Машина:</b> {vehicle_name}\n"
+            f"📝 <b>Заявка №{editing_request_id} муваффақиятли таҳрирланди va qayta tasdiqlashga yuborildi! 📝</b>\n\n"
+            f"🚗 <b>Машина:</b> {item_vehicle}\n"
             f"👤 <b>Юборувчи:</b> {user['full_name']}\n\n"
             f"📋 <b>Заявка таркиби:</b>\n"
             f"   1. " + ("🛠 [Таъмирлаш] " if item_type == 'repair' else "🛒 [Сотиб олиш] ") + f"{item['name']} — {item['qty']} та\n"
@@ -682,13 +748,16 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
     else:
         for item in temp_items:
             item_type = item['type']
+            item_vehicle = item.get('vehicle', vehicle_name)
+            await db.ensure_vehicle_exists(item_vehicle)
+            
             prefix = "Таъмирлаш: " if item_type == 'repair' else ""
-            description = f"Машина: {vehicle_name} | " + (f"Таъмирлаш: {item['name']}" if item_type == 'repair' else f"Сотиб олиш: {item['name']} ({item['qty']} та)")
+            description = f"Машина: {item_vehicle} | " + (f"Таъмирлаш: {item['name']}" if item_type == 'repair' else f"Сотиб олиш: {item['name']} ({item['qty']} та)")
             
             request_id = await db.create_request(
                 created_by=callback.from_user.id,
                 description=description,
-                vehicle_name=vehicle_name,
+                vehicle_name=item_vehicle,
                 old_part_photo=photo_id,
                 qty_used=None,
                 qty_left=None,
@@ -703,11 +772,14 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
                 quantity_missing=item['qty']
             )
             created_request_ids.append(request_id)
+            if item_vehicle not in vehicle_requests:
+                vehicle_requests[item_vehicle] = []
+            vehicle_requests[item_vehicle].append(f"№{request_id} ({item['name']})")
             
-            admin_prefix = f"🔔 <b>Янги заявка тасдиқлаш учун келди! (№{request_id})</b>\n\n"
+            admin_prefix = f"🔔 <b>Янги заявка тасдиқлаш uchun keldi! (№{request_id})</b>\n\n"
             summary_text = (
-                f"📝 <b>Заявка №{request_id} яратилди ва тасдиқлашга юборилди!</b>\n\n"
-                f"🚗 <b>Машина:</b> {vehicle_name}\n"
+                f"📝 <b>Заявка №{request_id} яратилdi va tasdiqlashga yuborildi!</b>\n\n"
+                f"🚗 <b>Машина:</b> {item_vehicle}\n"
                 f"👤 <b>Юборувчи:</b> {user['full_name']}\n\n"
                 f"📋 <b>Заявка таркиби:</b>\n"
                 f"   1. " + ("🛠 [Таъмирлаш] " if item_type == 'repair' else "🛒 [Сотиб олиш] ") + f"{item['name']} — {item['qty']} та\n"
@@ -729,21 +801,25 @@ async def finish_request_creation(callback: CallbackQuery, state: FSMContext, us
                 except Exception as e:
                     print(f"Admin {admin['telegram_id']}ni ogohlantirishda xato: {e}")
                     
-    status_desc = "Янги заявкалар: " + ", ".join(f"№{rid}" for rid in created_request_ids)
-    await db.update_vehicle_status(vehicle_name, 'nosoz', status_desc)
+    # Mark all processed vehicles as broken
+    for v, rids in vehicle_requests.items():
+        status_desc = "Янги заявкалар: " + ", ".join(rids)
+        await db.ensure_vehicle_exists(v)
+        await db.update_vehicle_status(v, 'nosoz', status_desc)
+        
     await state.clear()
     
     summary_text = (
-        f"🎉 <b>Заявкалар муваффақиятли яратилди ва тасдиқлашга юборилди!</b>\n\n"
-        f"🚗 <b>Машина:</b> {vehicle_name}\n"
+        f"🎉 <b>Заявкалар муваффақиятli yaratildi va tasdiqlashga yuborildi!</b>\n\n"
         f"🔢 <b>Яратилган заявка ID'лари:</b> " + ", ".join(f"<b>№{rid}</b>" for rid in created_request_ids) + "\n\n"
         f"📋 <b>Умумий таркиб:</b>\n"
     )
     for idx, item in enumerate(temp_items, start=1):
+        item_vehicle = item.get('vehicle', vehicle_name)
         if item['type'] == 'repair':
-            summary_text += f"   {idx}. 🛠 [Таъмирлаш] {item['name']}\n"
+            summary_text += f"   {idx}. 🛠 [Таъмирлаш] {item['name']} ({item_vehicle} учун)\n"
         else:
-            summary_text += f"   {idx}. 🛒 [Сотиб олиш] {item['name']} — {item['qty']} та\n"
+            summary_text += f"   {idx}. 🛒 [Сотиб олиш] {item['name']} — {item['qty']} та ({item_vehicle} учун)\n"
             
     if photo_id:
         await callback.message.answer_photo(

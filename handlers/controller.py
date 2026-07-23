@@ -139,11 +139,7 @@ async def list_pending_requests(message: Message):
                 f"Етишмайди: {item['quantity_missing']}\n"
             )
             
-        created_at = r['created_at']
-        if hasattr(created_at, 'strftime'):
-            date_str = created_at.strftime('%Y-%m-%d %H:%M')
-        else:
-            date_str = str(created_at)[:16].replace('T', ' ')
+        date_str = db.format_datetime(r['created_at'])
             
         text = (
             f"📝 <b>Заявка №{r['id']}</b>\n"
@@ -202,8 +198,7 @@ async def approve_all_pending_requests(callback: CallbackQuery):
                 f"   • <b>{item['item_name']}</b> — Сўралган: {item['quantity_requested']} дона | Омборда: {item['quantity_available']} | Етишмайди: {item['quantity_missing']}\n"
                 for item in items
             )
-            created_at = req['created_at']
-            date_str = created_at.strftime('%Y-%m-%d %H:%M') if hasattr(created_at, 'strftime') else str(created_at)[:16].replace('T', ' ')
+            date_str = db.format_datetime(req['created_at'])
             
             for c in couriers:
                 try:
@@ -413,11 +408,7 @@ async def approve_request(callback: CallbackQuery):
             f"Етишмайди (Олинади): {item['quantity_missing']}\n"
         )
         
-    created_at = req['created_at']
-    if hasattr(created_at, 'strftime'):
-        created_date = created_at.strftime('%Y-%m-%d %H:%M')
-    else:
-        created_date = str(created_at)[:16].replace('T', ' ')
+    created_date = db.format_datetime(req['created_at'])
     role_display = {
         'super_admin': "Супер Админ 👑",
         'manager': "Бошқарувчи 💼",
@@ -537,11 +528,7 @@ async def reject_request(callback: CallbackQuery):
     await db.update_request_status(request_id, 'rejected', callback.from_user.id, role_label)
     await callback.answer("Заявка рад этилди.")
     
-    created_at = req['created_at']
-    if hasattr(created_at, 'strftime'):
-        created_date = created_at.strftime('%Y-%m-%d %H:%M')
-    else:
-        created_date = str(created_at)[:16].replace('T', ' ')
+    created_date = db.format_datetime(req['created_at'])
     role_display = "Супер Админ 👑" if user['role'] == 'super_admin' else "Бошқарувчи 💼"
     summary_text = (
         f"❌ **Заявка №{request_id} {role_display} томонидан рад этилди.**\n"
@@ -591,11 +578,7 @@ async def process_req_revision(callback: CallbackQuery):
     await db.update_request_status(request_id, 'needs_revision', callback.from_user.id, role_label)
     await callback.answer("Заявка қайта ишлашга юборилди.")
     
-    created_at = req['created_at']
-    if hasattr(created_at, 'strftime'):
-        created_date = created_at.strftime('%Y-%m-%d %H:%M')
-    else:
-        created_date = str(created_at)[:16].replace('T', ' ')
+    created_date = db.format_datetime(req['created_at'])
     role_display = "Супер Админ 👑" if user['role'] == 'super_admin' else "Бошқарувчи 💼"
     summary_text = (
         f"🔄 **Заявка №{request_id} қайта ишлашга қайтариб юборилди.**\n"
@@ -657,11 +640,7 @@ async def show_all_requests(message: Message):
         for item in items:
             items_text += f"   • {item['item_name']}: {item['quantity_requested']} та (Етишмайди: {item['quantity_missing']})\n"
             
-        created_at = r['created_at']
-        if hasattr(created_at, 'strftime'):
-            date_str = created_at.strftime('%Y-%m-%d %H:%M')
-        else:
-            date_str = str(created_at)[:16].replace('T', ' ')
+        date_str = db.format_datetime(r['created_at'])
             
         text = (
             f"🆔 <b>Заявка №{r['id']}</b>\n"
@@ -711,11 +690,7 @@ async def show_requests_movement(message: Message):
         elif r['status'] == 'rejected':
             flow_text += f"❌ <b>Рад этилди</b>\n"
 
-        created_at = r['created_at']
-        if hasattr(created_at, 'strftime'):
-            date_str = created_at.strftime('%Y-%m-%d %H:%M')
-        else:
-            date_str = str(created_at)[:16].replace('T', ' ')
+        date_str = db.format_datetime(r['created_at'])
             
         text = (
             f"🆔 <b>Заявка №{r['id']}</b>\n"

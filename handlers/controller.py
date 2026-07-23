@@ -158,6 +158,94 @@ async def list_pending_requests(message: Message):
             parse_mode="HTML"
         )
 
+    if len(pending) > 1:
+        await message.answer(
+            f"⚡ <b>Барча кутилаётган заявкаlarni ({len(pending)} та) бирдаiga тасдиқлаш учун қуйидаги тугмани босинг:</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚡ Ҳамма заявкаларни тасдиқлаш ✅", callback_data="approve_all_pending")]
+            ]),
+            parse_mode="HTML"
+        )
+
+@router.callback_query(F.data == "approve_all_pending")
+async def approve_all_pending_requests(callback: CallbackQuery):
+    user = await db.get_user(callback.from_user.id)
+    if not user or user['role'] not in ['manager', 'super_admin', 'observer']:
+        await callback.answer("Сизда заявкаларни тасдиқлаш ҳуқуқи йўқ!", show_alert=True)
+        return
+
+    pending = await db.get_requests_by_status('pending_approval')
+    pending.extend(await db.get_requests_by_status('pending_admin_approval'))
+    if not pending:
+        await callback.answer("Ҳозирда кутилаётган заявкалар йўқ.", show_alert=True)
+        if callback.message:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+        return
+
+    couriers = await db.get_users_by_role('courier')
+    role_label = user['role']
+    approved_count = 0
+
+    for req in pending:
+        request_id = req['id']
+        is_repair = req.get('request_type') == 'repair'
+        target_status = get_approval_target_status(req.get('request_type'))
+        await db.update_request_status(request_id, target_status, callback.from_user.id, role_label)
+        approved_count += 1
+
+        if not is_repair and couriers:
+            items = await db.get_request_items(request_id)
+            items_text = "".join(
+                f"   • <b>{item['item_name']}</b> — Сўралган: {item['quantity_requested']} дона | Омборда: {item['quantity_available']} | Етишмайди: {item['quantity_missing']}\n"
+                for item in items
+            )
+            created_at = req['created_at']
+            date_str = created_at.strftime('%Y-%m-%d %H:%M') if hasattr(created_at, 'strftime') else str(created_at)[:16].replace('T', ' ')
+            
+            for c in couriers:
+                try:
+                    from main import bot
+                    from handlers.common import get_courier_take_keyboard
+                    msg_text = (
+                        f"🚚 <b>Янги буюртма (Заявка №{request_id}) етказиш учун келди!</b>\n\n"
+                        f"Механик/Бригадир: {req['creator_name']}\n"
+                        f"📋 Тавсиф: {req['description']}\n"
+                        f"📅 <b>Сана:</b> {date_str}\n\n"
+                        f"🔍 <b>Олиб келинадиган товарлар:</b>\n{items_text}\n"
+                        f"Етказишни қабул қилиш учун пастдаги тугмани босинг."
+                    )
+                    kb = get_courier_take_keyboard(request_id)
+                    if req.get('old_part_photo'):
+                        await bot.send_photo(c['telegram_id'], photo=req['old_part_photo'], caption=msg_text, reply_markup=kb, parse_mode="HTML")
+                    else:
+                        await bot.send_message(c['telegram_id'], text=msg_text, reply_markup=kb, parse_mode="HTML")
+                except Exception as e:
+                    print(f"Ta'minotchini ogohlantirishda xato: {e}")
+
+    await callback.answer(f"Барча ({approved_count} та) кутилаётган заявкалар муваффақиятли тасдиқланди! ✅", show_alert=True)
+
+    role_display = {
+        'super_admin': "Супер Админ 👑",
+        'manager': "Бошқарувчи 💼",
+        'observer': "Бошқарувчи 2 💼",
+    }[user['role']]
+
+    summary = (
+        f"⚡ <b>Барча кутилаётган заявкалар ({approved_count} та) {role_display} {user['full_name']} томонидан муваффақиятли тасдиқланди! ✅</b>"
+    )
+
+    if callback.message:
+        try:
+            if callback.message.photo:
+                await callback.message.edit_caption(caption=summary, reply_markup=None, parse_mode="HTML")
+            else:
+                await callback.message.edit_text(text=summary, reply_markup=None, parse_mode="HTML")
+        except Exception:
+            pass
+
 @router.callback_query(F.data.startswith("bulk_approve_"))
 async def bulk_approve_request(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)

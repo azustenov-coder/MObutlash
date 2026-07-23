@@ -172,6 +172,25 @@ class PerformancePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row2[0].text, "Ҳаммасини қайта ишлашга 🔄")
         self.assertEqual(row2[0].callback_data, "bulk_revision_12345")
 
+        row3 = markup.inline_keyboard[2]
+        self.assertEqual(row3[0].callback_data, "approve_all_pending")
+
+    def test_request_manage_keyboard_has_approve_all(self):
+        from handlers.common import get_request_manage_keyboard
+        markup = get_request_manage_keyboard(999)
+        callbacks = [b.callback_data for row in markup.inline_keyboard for b in row]
+        self.assertIn("approve_all_pending", callbacks)
+
+
+    def test_courier_menu_has_zayavka_yaratish_button(self):
+        markup_dynamic = get_main_keyboard("courier", courier_counts={"available": 1, "searching_items": 0, "active": 2, "awaiting_receipt": 0})
+        buttons_dynamic = [b.text for row in markup_dynamic.keyboard for b in row]
+        self.assertIn("Zayavka yaratish ✍️", buttons_dynamic)
+
+        markup_static = get_main_keyboard("courier")
+        buttons_static = [b.text for row in markup_static.keyboard for b in row]
+        self.assertIn("Заявка яратиш ✍️", buttons_static)
+
 
 if __name__ == "__main__":
     unittest.main()

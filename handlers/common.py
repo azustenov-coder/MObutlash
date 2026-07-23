@@ -32,10 +32,10 @@ MAIN_MENU_PREFIXES = (
     "Автолар", "Менинг заявкаларим", "Складдан олиш",
     "Тайёрланиши кутилаётганлар", "Омбор захирасини бошқариш",
     "Етказилиши кутилаётганлар", "Қидирилаётган товарлар",
-    "Актив етказувларим", "Склад қабулини кутаётганлар", "Кун якуни",
+    "Актив етказувларим", "Склад қабулини кутаётганлар", "Кун якуни", "Заявка яратиш",
     "Kutilayotgan zayavkalar", "Barcha zayavkalar", "Ombor qoldiqlari",
     "Excel hisobot yuklab olish", "Kunlik hisobot", "Yetkazilishi kutilayotganlar",
-    "Qidirilayotgan tovarlar", "Aktiv yetkazuvlarim", "Sklad qabulini kutayotganlar",
+    "Qidirilayotgan tovarlar", "Aktiv yetkazuvlarim", "Sklad qabulini kutayotganlar", "Zayavka yaratish",
     "Veb-dashboard", "Веб-панел", "Веб-дашбоард", "Veb-panel",
 )
 
@@ -224,13 +224,14 @@ def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None,
                 keyboard=[
                     [KeyboardButton(text=f"Yetkazilishi kutilayotganlar \U0001F69A ({courier_counts.get('available', 0)})"), KeyboardButton(text=f"Qidirilayotgan tovarlar \U0001F50E ({courier_counts.get('searching_items', 0)})")],
                     [KeyboardButton(text=f"Aktiv yetkazuvlarim \U0001F6E3\uFE0F ({courier_counts.get('active', 0)})"), KeyboardButton(text=f"Sklad qabulini kutayotganlar \U0001F4E6 ({courier_counts.get('awaiting_receipt', 0)})")],
-                    [KeyboardButton(text="Kun yakuni \U0001F4CA")],
+                    [KeyboardButton(text="Zayavka yaratish ✍️"), KeyboardButton(text="Kun yakuni \U0001F4CA")],
                 ],
                 resize_keyboard=True,
             )
         keyboard = [
             [KeyboardButton(text="Етказилиши кутилаётганлар 🚚"), KeyboardButton(text="Қидирилаётган товарлар 🔎")],
-            [KeyboardButton(text="Актив етказувларим 🛣️"), KeyboardButton(text="Кун якуни 📊")]
+            [KeyboardButton(text="Актив етказувларим 🛣️"), KeyboardButton(text="Заявка яратиш ✍️")],
+            [KeyboardButton(text="Кун якуни 📊")]
         ]
     
     if not keyboard:
@@ -597,6 +598,9 @@ def get_request_manage_keyboard(request_id: int):
         ],
         [
             InlineKeyboardButton(text="Қайта ишлашга 🔄", callback_data=f"req_revision_{request_id}")
+        ],
+        [
+            InlineKeyboardButton(text="⚡ Ҳамма заявкаларни тасдиқлаш ✅", callback_data="approve_all_pending")
         ]
     ])
 
@@ -608,6 +612,9 @@ def get_bulk_request_manage_keyboard(batch_id: int):
         ],
         [
             InlineKeyboardButton(text="Ҳаммасини қайта ишлашга 🔄", callback_data=f"bulk_revision_{batch_id}")
+        ],
+        [
+            InlineKeyboardButton(text="⚡ Барча кутилаётган заявкаларни тасдиқлаш ✅", callback_data="approve_all_pending")
         ]
     ])
 

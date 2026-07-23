@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton
 import database as db
 import re
 from handlers.common import (
@@ -195,6 +195,36 @@ async def process_stock_qty(message: Message, state: FSMContext):
 
 
 # --- YETKAZIB BERUVCHI OPERATSIYALARI ---
+
+@router.message(F.text.startswith("Zayavka yaratish") | F.text.startswith("Заявка яратиш"))
+async def start_courier_request_creation(message: Message, state: FSMContext):
+    user = await db.get_user(message.from_user.id)
+    if not user or user['role'] not in ['courier', 'mechanic', 'brigadier']:
+        await message.answer("Сизда ушбу командани бажариш учун ҳуқуқ йўқ.")
+        return
+
+    from handlers.mechanic import RequestCreationStates
+    await state.clear()
+    await state.set_state(RequestCreationStates.waiting_for_vehicle)
+
+    keyboard = []
+    row = []
+    for veh in db.PREDEFINED_VEHICLES:
+        row.append(KeyboardButton(text=veh))
+        if len(row) == 4:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([KeyboardButton(text="Бекор қилиш ❌")])
+    markup = ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+    await message.answer(
+        "📝 <b>Заявка яратиш (1/4):</b>\n"
+        "Илтимос, рўйхатдан транспорт воситасини танланг ёки номини ёзинг:",
+        reply_markup=markup,
+        parse_mode="HTML"
+    )
 
 @router.message(F.text.startswith("Yetkazilishi kutilayotganlar") | F.text.startswith("Етказилиши кутилаётганлар"))
 async def list_approved_to_deliver(message: Message):

@@ -451,7 +451,7 @@ export default function App() {
           {/* Right column: role activity and live journal */}
           <div
             className="lg:col-span-5 h-full min-h-0 flex flex-col gap-8 overflow-hidden"
-            style={isDesktopLayout && inventoryCardHeight ? { height: inventoryCardHeight } : undefined}
+            style={isDesktopLayout && inventoryCardHeight ? { height: Math.max(800, inventoryCardHeight) } : undefined}
           >
           {/* Chart B: Roles Activity count & custom radar/bar concept */}
           <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 lg:p-6 shadow-2xl">

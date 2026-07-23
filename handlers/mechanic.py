@@ -412,7 +412,7 @@ async def process_veh_list_back(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("veh_newreq_"))
 async def process_veh_newreq(callback: CallbackQuery, state: FSMContext):
     user = await db.get_user(callback.from_user.id)
-    if not user or user['role'] not in ['mechanic', 'brigadier']:
+    if not user or user['role'] not in ['mechanic', 'brigadier', 'courier']:
         await callback.answer("Сизда ушбу операцияни бажариш ҳуқуқи йўқ!", show_alert=True)
         return
         
@@ -1278,3 +1278,35 @@ async def process_mechanic_resubmit(callback: CallbackQuery, state: FSMContext):
         reply_markup=markup
     )
     await callback.answer()
+
+@router.message(RequestCreationStates.waiting_for_vehicle)
+async def process_vehicle_selection(message: Message, state: FSMContext):
+    user = await db.get_user(message.from_user.id)
+    if not user:
+        await state.clear()
+        return
+
+    text = message.text.strip() if message.text else ""
+    if text in ("Bekor qilish ❌", "Бекор қилиш ❌"):
+        await state.clear()
+        await message.answer("Заявка бекор қилинди.", reply_markup=await get_user_main_keyboard(message.from_user.id, user['role']))
+        return
+
+    if not text:
+        await message.answer("Илтимос, рўйхатдан транспорт воситасини танланг ёки номини ёзинг:")
+        return
+
+    await state.update_data(vehicle_name=text, temp_items=[])
+    await state.set_state(RequestCreationStates.waiting_for_photo)
+
+    skip_kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="Расм йўқ 🚫")],
+        [KeyboardButton(text="Бекор қилиш ❌")]
+    ], resize_keyboard=True, one_time_keyboard=True)
+
+    await message.answer(
+        f"🚗 <b>Танланган машина:</b> {text}\n\n"
+        f"📷 <b>Ески запчаст расмини юборинг (ёки расми бўлмаса, қуйидаги тугмани босинг):</b>",
+        reply_markup=skip_kb,
+        parse_mode="HTML"
+    )

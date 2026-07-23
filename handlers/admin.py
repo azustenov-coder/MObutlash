@@ -36,13 +36,14 @@ async def show_pending_users(message: Message):
             f"🔑 **Сўралган рол:** {role_label}\n"
             f"🆔 **TG ID:** `{u['telegram_id']}`"
         )
+        
         await message.answer(
             text, 
             reply_markup=get_approve_keyboard(u['telegram_id']),
             parse_mode="Markdown"
         )
 
-@router.callback_query(F.data.startswith("approve_"))
+@router.callback_query(F.data.startswith("approve_") & ~F.data.startswith("approve_all"))
 async def process_approve(callback: CallbackQuery):
     admin = await db.get_user(callback.from_user.id)
     if not admin or admin['role'] not in ['super_admin', 'manager', 'observer']:

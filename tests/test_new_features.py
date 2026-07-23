@@ -26,11 +26,11 @@ class NewFeaturesIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_leadership_keyboards_contain_approve_all(self):
         req_kb = get_request_manage_keyboard(101)
         req_callbacks = [btn.callback_data for row in req_kb.inline_keyboard for btn in row]
-        self.assertIn("approve_all_pending", req_callbacks)
+        self.assertIn("hamma_approve_all", req_callbacks)
 
         bulk_kb = get_bulk_request_manage_keyboard(202)
         bulk_callbacks = [btn.callback_data for row in bulk_kb.inline_keyboard for btn in row]
-        self.assertIn("approve_all_pending", bulk_callbacks)
+        self.assertIn("hamma_approve_all", bulk_callbacks)
 
     @patch("database.get_user", new_callable=AsyncMock)
     async def test_courier_start_request_creation_permission(self, mock_get_user):

@@ -160,14 +160,14 @@ async def list_pending_requests(message: Message):
 
     if len(pending) > 1:
         await message.answer(
-            f"⚡ <b>Барча кутилаётган заявкаlarni ({len(pending)} та) бирдаiga тасдиқлаш учун қуйидаги тугмани босинг:</b>",
+            f"⚡ <b>Барча кутилаётган заявкаларни ({len(pending)} та) бирдаига тасдиқлаш учун қуйидаги тугмани босинг:</b>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⚡ Ҳамма заявкаларни тасдиқлаш ✅", callback_data="approve_all_pending")]
+                [InlineKeyboardButton(text="⚡ Ҳамма заявкаларни тасдиқлаш ✅", callback_data="hamma_approve_all")]
             ]),
             parse_mode="HTML"
         )
 
-@router.callback_query(F.data == "approve_all_pending")
+@router.callback_query(F.data == "hamma_approve_all")
 async def approve_all_pending_requests(callback: CallbackQuery):
     user = await db.get_user(callback.from_user.id)
     if not user or user['role'] not in ['manager', 'super_admin', 'observer']:

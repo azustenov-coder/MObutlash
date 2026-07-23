@@ -600,7 +600,7 @@ def get_request_manage_keyboard(request_id: int):
             InlineKeyboardButton(text="Қайта ишлашга 🔄", callback_data=f"req_revision_{request_id}")
         ],
         [
-            InlineKeyboardButton(text="⚡ Ҳамма заявкаларни тасдиқлаш ✅", callback_data="approve_all_pending")
+            InlineKeyboardButton(text="⚡ Ҳамма заявкаларни тасдиқлаш ✅", callback_data="hamma_approve_all")
         ]
     ])
 
@@ -614,7 +614,7 @@ def get_bulk_request_manage_keyboard(batch_id: int):
             InlineKeyboardButton(text="Ҳаммасини қайта ишлашга 🔄", callback_data=f"bulk_revision_{batch_id}")
         ],
         [
-            InlineKeyboardButton(text="⚡ Барча кутилаётган заявкаларни тасдиқлаш ✅", callback_data="approve_all_pending")
+            InlineKeyboardButton(text="⚡ Барча кутилаётган заявкаларни тасдиқлаш ✅", callback_data="hamma_approve_all")
         ]
     ])
 

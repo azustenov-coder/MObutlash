@@ -173,13 +173,13 @@ class PerformancePathTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row2[0].callback_data, "bulk_revision_12345")
 
         row3 = markup.inline_keyboard[2]
-        self.assertEqual(row3[0].callback_data, "approve_all_pending")
+        self.assertEqual(row3[0].callback_data, "hamma_approve_all")
 
     def test_request_manage_keyboard_has_approve_all(self):
         from handlers.common import get_request_manage_keyboard
         markup = get_request_manage_keyboard(999)
         callbacks = [b.callback_data for row in markup.inline_keyboard for b in row]
-        self.assertIn("approve_all_pending", callbacks)
+        self.assertIn("hamma_approve_all", callbacks)
 
 
     def test_courier_menu_has_zayavka_yaratish_button(self):

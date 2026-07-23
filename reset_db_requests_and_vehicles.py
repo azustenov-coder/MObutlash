@@ -19,8 +19,7 @@ async def reset_neon_database():
     await db.init_db()
     async with db.db_pool.connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("DELETE FROM request_items;")
-            await cur.execute("DELETE FROM requests;")
+            await cur.execute("TRUNCATE TABLE request_items, requests RESTART IDENTITY CASCADE;")
             await cur.execute("UPDATE vehicles SET status = 'soz', reason = NULL;")
             await cur.execute("DELETE FROM bot_fsm;")
             await conn.commit()

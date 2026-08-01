@@ -1987,11 +1987,7 @@ async def auto_process_admin_zayavka(
                 
                 processed_items.append({'name': name, 'quantity': qty, 'unit': unit})
                 
-            # 4. Avtomobilni qayta 'soz' holatga o'tkazish
-            await cursor.execute(
-                "UPDATE vehicles SET status = 'soz', reason = NULL WHERE name = %s",
-                (vehicle_name,)
-            )
+
             
             await db.commit()
             return request_id, processed_items

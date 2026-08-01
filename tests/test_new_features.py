@@ -95,6 +95,51 @@ class NewFeaturesIntegrationTest(unittest.IsolatedAsyncioTestCase):
         callback.answer.assert_called_once()
         self.assertIn("муваффақиятли тасдиқланди", callback.answer.call_args[0][0])
 
+    @patch("database.db_pool")
+    async def test_auto_process_admin_zayavka_keeps_vehicle_nosoz(self, mock_db_pool):
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        
+        mock_db_pool.connection = MagicMock()
+        mock_db_pool.connection.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_db_pool.connection.return_value.__aexit__ = AsyncMock()
+        
+        mock_conn.cursor = MagicMock()
+        mock_conn.cursor.return_value.__aenter__ = AsyncMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__aexit__ = AsyncMock()
+        
+        mock_cursor.execute = AsyncMock()
+        mock_cursor.fetchone = AsyncMock()
+        mock_conn.commit = AsyncMock()
+        
+        mock_cursor.fetchone.side_effect = [
+            {"id": 123},  # requests RETURNING id
+            None,         # select inventory
+        ]
+        
+        from database import auto_process_admin_zayavka
+        req_id, processed = await auto_process_admin_zayavka(
+            admin_id=999,
+            vehicle_name="102",
+            request_type="purchase",
+            description="3 ta podshipnik",
+            parsed_items=[{'name': 'podshipnik', 'qty': 3, 'unit': 'dona', 'price': 0}]
+        )
+        
+        self.assertEqual(req_id, 123)
+        self.assertEqual(len(processed), 1)
+        self.assertEqual(processed[0]['name'], 'podshipnik')
+        
+        executed_calls = [call[0][0] for call in mock_cursor.execute.call_args_list]
+        
+        # It must update vehicles status to 'nosoz'
+        update_nosoz_called = any("UPDATE vehicles SET status = 'nosoz'" in q for q in executed_calls)
+        self.assertTrue(update_nosoz_called)
+        
+        # It must NOT update vehicles status back to 'soz'
+        update_soz_called = any("status = 'soz'" in q for q in executed_calls)
+        self.assertFalse(update_soz_called)
+
 
 if __name__ == "__main__":
     unittest.main()

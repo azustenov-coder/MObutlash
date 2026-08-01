@@ -25,9 +25,9 @@ import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
 import { DashboardState, BotEvent } from "./types";
 import { StatCards } from "./components/dashboard/StatCards";
-import { MapWidget } from "./components/dashboard/MapWidget";
+
 import { OperationsTable } from "./components/dashboard/OperationsTable";
-import { yangiyolPoints, toshkentPoints, getDestKey } from "./utils/mapUtils";
+
 
 export default function App() {
   const [data, setData] = useState<DashboardState | null>(null);
@@ -44,10 +44,7 @@ export default function App() {
   const [inventoryCardHeight, setInventoryCardHeight] = useState<number | null>(null);
   const [isDesktopLayout, setIsDesktopLayout] = useState(false);
 
-  const [selectedMap, setSelectedMap] = useState<"yangiyol" | "toshkent">("yangiyol");
-
-  // Map points resolution
-  const mapPoints = selectedMap === "yangiyol" ? yangiyolPoints : toshkentPoints;
+  
   
   // Time tracker
   const [currentTime, setCurrentTime] = useState("");
@@ -789,15 +786,9 @@ export default function App() {
 
           </div>
 
-          {/* GPS xaritasi jurnal ostidagi o'ng ustunda */}
+          {/* GPS xaritasi o'chirildi, faqat maxsus texnikalar jadvali */}
           <div className="lg:col-span-5 lg:col-start-8 lg:row-start-1">
-            <MapWidget
-              transportOrders={data.transportOrders}
-              selectedMap={selectedMap}
-              setSelectedMap={setSelectedMap}
-              mapPoints={mapPoints}
-            />
-            <div id="special-vehicles-slot" className="mt-8" />
+            <div id="special-vehicles-slot" className="mt-0" />
           </div>
 
         </section>

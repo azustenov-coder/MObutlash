@@ -37,6 +37,7 @@ MAIN_MENU_PREFIXES = (
     "Excel hisobot yuklab olish", "Kunlik hisobot", "Yetkazilishi kutilayotganlar",
     "Qidirilayotgan tovarlar", "Aktiv yetkazuvlarim", "Sklad qabulini kutayotganlar", "Zayavka yaratish",
     "Veb-dashboard", "Веб-панел", "Веб-дашбоард", "Veb-panel",
+    "Заявка", "Zayavka",
 )
 
 
@@ -167,7 +168,7 @@ def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None,
     keyboard = []
     if role == 'super_admin':
         keyboard = [
-            [KeyboardButton(text="Заявка яратиш (Авто) ⚡"), KeyboardButton(text=membership_btn)],
+            [KeyboardButton(text="Заявка"), KeyboardButton(text=membership_btn)],
             [KeyboardButton(text=employees_btn), KeyboardButton(text=pending_btn)],
             [KeyboardButton(text=all_requests_btn), KeyboardButton(text=open_requests_btn)],
             [KeyboardButton(text=vehicles_btn_text), KeyboardButton(text=completed_requests_btn)],

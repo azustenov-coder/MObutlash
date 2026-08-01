@@ -1,12 +1,16 @@
 services:
-  # 1. Telegram Bot (Background Worker)
-  - type: worker
+  # 1. Telegram Bot (Web Service)
+  - type: web
     name: mo-bot
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
+    healthCheckPath: /ping
     envVars:
       - key: BOT_TOKEN
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: PING_URL
+        sync: false
+

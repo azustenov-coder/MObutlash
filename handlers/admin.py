@@ -321,9 +321,11 @@ async def start_writing_message(callback: CallbackQuery, state: FSMContext):
         
     await callback.message.answer(
         f"✍️ **{target_user['full_name']}** ({role_label}) учун хабарингизни ёзинг:\n"
-        f"Матн, расм, видео ёки файл юборишингиз мумкин.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Бекор қилиш ❌", callback_data="cancel_write")]
+        f"Матн, расм, видео ёки файл юборишинги�    sender = await db.get_user(message.from_user.id)
+    sender_name = sender['full_name']
+    sender_role = ROLE_LABELS.get(sender['role'], sender['role'])
+    if sender['role'] == 'super_admin':
+        sender_role = "Super Admin"xt="Бекор қилиш ❌", callback_data="cancel_write")]
         ])
     )
     await callback.answer()
@@ -368,5 +370,144 @@ async def send_message_to_user(message: Message, state: FSMContext):
             f"Ходим ботни тўхтатган бўлиши мумкин.",
             reply_markup=await get_user_main_keyboard(message.from_user.id, sender['role'])
         )
+    finally:
+        await state.clear()
+
+
+class AdminAutoZayavkaStates(StatesGroup):
+    waiting_for_vehicle = State()
+    waiting_for_type = State()
+    waiting_for_items_text = State()
+
+
+@router.message(F.text.in_([
+    "Заявка яратиш (Авто) ⚡", "Zayavka yaratish (Avto) ⚡",
+    "Zayavka (Avto) ⚡", "Zayavka ⚡", "Заявка ⚡", "Заявка", "Zayavka"
+]) | F.text.startswith("Заявка ⚡") | F.text.startswith("Zayavka ⚡"))
+async def start_admin_auto_zayavka(message: Message, state: FSMContext):
+    user = await db.get_user(message.from_user.id)
+    if not user or user['role'] not in ['super_admin', 'manager']:
+        await message.answer("Сизда ушбу командани бажариш учун ҳуқуқ йўқ.")
+        return
+        
+    vehicles = await db.get_all_vehicles()
+    if not vehicles:
+        await message.answer("Тизимда автомашиналаp топилмади.")
+        return
+        
+    keyboard = []
+    row = []
+    for v in vehicles:
+        v_name = v['name']
+        status_icon = "🔴" if v.get('status') == 'nosoz' else "🟢"
+        row.append(InlineKeyboardButton(text=f"{v_name} {status_icon}", callback_data=f"admin_autoveh_{v_name}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton(text="Бекор қилиш ❌", callback_data="admin_autoz_cancel")])
+    
+    await state.set_state(AdminAutoZayavkaStates.waiting_for_vehicle)
+    await message.answer(
+        "⚡ **СУПЕР АДМИН АВТОМАТИК ЗАЯВКА**\n\n"
+        "🚗 **Заявка ва Омборга приход қилинадиган автомашинани танланг:**",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        parse_mode="Markdown"
+    )
+
+@router.callback_query(F.data == "admin_autoz_cancel")
+async def cancel_admin_auto_zayavka(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Автоматик заявка бекор қилинди.")
+    await callback.answer()
+
+@router.callback_query(AdminAutoZayavkaStates.waiting_for_vehicle, F.data.startswith("admin_autoveh_"))
+async def process_admin_autoveh_choice(callback: CallbackQuery, state: FSMContext):
+    vehicle_name = callback.data.split("admin_autoveh_")[1]
+    await state.update_data(vehicle_name=vehicle_name)
+    
+    type_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔧 Таъмирлаш", callback_data="admin_autotype_ta_mirlash")],
+        [InlineKeyboardButton(text="🛒 Эҳтиёт қисм хариди", callback_data="admin_autotype_ehtiyot_qism")],
+        [InlineKeyboardButton(text="Бекор қилиш ❌", callback_data="admin_autoz_cancel")]
+    ])
+    
+    await state.set_state(AdminAutoZayavkaStates.waiting_for_type)
+    await callback.message.edit_text(
+        f"🚗 **Танланган автомашина:** `{vehicle_name}`\n\n"
+        f"📌 **Заявка турини танланг:**",
+        reply_markup=type_kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@router.callback_query(AdminAutoZayavkaStates.waiting_for_type, F.data.startswith("admin_autotype_"))
+async def process_admin_autotype_choice(callback: CallbackQuery, state: FSMContext):
+    request_type = callback.data.split("admin_autotype_")[1]
+    await state.update_data(request_type=request_type)
+    data = await state.get_data()
+    
+    await state.set_state(AdminAutoZayavkaStates.waiting_for_items_text)
+    await callback.message.edit_text(
+        f"🚗 **Автомашина:** `{data['vehicle_name']}`\n"
+        f"📌 **Тури:** `{'Таъмирлаш' if request_type == 'ta_mirlash' else 'Эҳтиёт қисм хариди'}`\n\n"
+        f"📝 **Заявка маҳсулотлари/ишларини киритинг:**\n\n"
+        f"Масалан:\n"
+        f"`2 ta galovka praklatka, 4 ta pachivnik, 6 ta generator remen`\n"
+        f"ёки\n"
+        f"`5 dona gidravlika shlangi, 50 dona motor moyi`\n\n"
+        f"*(Киритилган маҳсулотлар автоматик равишда Омборга приход қилинади ва авто 'nosoz'дан 'soz'га ўтади)*",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@router.message(AdminAutoZayavkaStates.waiting_for_items_text)
+async def process_admin_autoitems_text(message: Message, state: FSMContext):
+    data = await state.get_data()
+    vehicle_name = data.get('vehicle_name')
+    request_type = data.get('request_type', 'ehtiyot_qism')
+    items_text = message.text.strip()
+    
+    from handlers.mechanic import parse_request_text
+    parsed = await parse_request_text(items_text, default_vehicle=vehicle_name)
+    
+    if not parsed:
+        await message.answer(
+            "❌ Маҳсулотлар аниқланмади. Илтимос, қайтадан миқдор ва номини ёзинг.\n"
+            "Масалан: `2 ta praklatka, 5 dona shlang`"
+        )
+        return
+        
+    try:
+        request_id, processed_items = await db.auto_process_admin_zayavka(
+            admin_id=message.from_user.id,
+            vehicle_name=vehicle_name,
+            request_type=request_type,
+            description=items_text,
+            parsed_items=parsed
+        )
+        
+        items_summary = ""
+        for item in processed_items:
+            items_summary += f"   • **{item['name']}** — {item['quantity']} {item.get('unit', 'dona')}\n"
+            
+        res_text = (
+            f"✅ **АВТОМАТИК ЗАЯВКА ВА ОМБОРГА ПРИХОД МУВАФФАҚИЯТЛИ БАЖАРИЛДИ!** ⚡\n\n"
+            f"🚗 **Автомашина:** `{vehicle_name}`\n"
+            f"🔄 **Автомашина ҳолати:** `СОЗ 🟢` (Заявка вақтида 'Носоз' 🔴 га ўтиб, таъмирланиб қайта 'Соз' 🟢 га ўтказилди)\n"
+            f"📝 **Заявка ID:** #{request_id}\n\n"
+            f"📦 **Омборга автоматик приход қилинди:**\n"
+            f"{items_summary}\n"
+            f"📊 *Ушбу маълумотлар DB базада сақланди ва барча Excel ҳисоботларида автоматик акс этади!*"
+        )
+        
+        await message.answer(
+            res_text,
+            reply_markup=await get_user_main_keyboard(message.from_user.id, 'super_admin'),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Автоматик заявкада хатолик юз берди: {e}")
     finally:
         await state.clear()

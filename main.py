@@ -140,14 +140,17 @@ async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Ботни ишга тушириш / Менюни очиш"),
         BotCommand(command="menu", description="Менюни янгилаш"),
+        BotCommand(command="vehicles_excel", description="Автомашиналар Excel ҳисоботини юклаб олиш 🚗"),
     ])
 
-    # Dummy web server function
+    # Web server & keep-alive background task
     async def handle_ping(request):
-        return web.Response(text="Bot is running!")
+        return web.json_response({"status": "ok", "message": "Bot is running!", "service": "mo-bot"})
 
     app = web.Application()
     app.router.add_get("/", handle_ping)
+    app.router.add_get("/ping", handle_ping)
+    app.router.add_get("/health", handle_ping)
     
     runner = web.AppRunner(app)
     await runner.setup()
@@ -155,9 +158,24 @@ async def main():
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     
-    # Start web server
     await site.start()
-    logging.info(f"Dummy web server started on port {port}")
+    logging.info(f"Web server started on port {port}")
+
+    async def keep_alive_loop(server_port: int):
+        """Self-ping loop every 3 minutes to keep web server alive and DB pool active."""
+        import aiohttp
+        ping_target = os.environ.get("PING_URL", f"http://127.0.0.1:{server_port}/ping")
+        while True:
+            await asyncio.sleep(180)
+            try:
+                await db.keep_alive_ping()
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(ping_target, timeout=10) as resp:
+                        pass
+            except Exception as ex:
+                logging.debug(f"Keep-alive ping warning: {ex}")
+
+    ping_task = asyncio.create_task(keep_alive_loop(port))
 
     # Pollingni boshlash
     logging.info("Bot ishga tushmoqda...")
@@ -167,6 +185,7 @@ async def main():
     except Exception as e:
         logging.error(f"Botni ishga tushirishda xato yuz berdi: {e}")
     finally:
+        ping_task.cancel()
         await bot.session.close()
         await db.close_db()
         await runner.cleanup()

@@ -167,13 +167,14 @@ def get_main_keyboard(role: str, soz_count: int = None, nosoz_count: int = None,
     keyboard = []
     if role == 'super_admin':
         keyboard = [
-            [KeyboardButton(text=membership_btn), KeyboardButton(text=employees_btn)],
-            [KeyboardButton(text=pending_btn), KeyboardButton(text=all_requests_btn)],
-            [KeyboardButton(text=open_requests_btn), KeyboardButton(text=vehicles_btn_text)],
-            [KeyboardButton(text=completed_requests_btn), KeyboardButton(text="Веб-панел 🖥️")],
-            [KeyboardButton(text=movement_btn), KeyboardButton(text=inventory_btn)],
-            [KeyboardButton(text="Excel ҳисобот юклаб олиш 📊"), KeyboardButton(text="Кунлик ҳисобот 📅")],
-            [KeyboardButton(text=soz_btn_text), KeyboardButton(text=nosoz_btn_text)]
+            [KeyboardButton(text="Заявка яратиш (Авто) ⚡"), KeyboardButton(text=membership_btn)],
+            [KeyboardButton(text=employees_btn), KeyboardButton(text=pending_btn)],
+            [KeyboardButton(text=all_requests_btn), KeyboardButton(text=open_requests_btn)],
+            [KeyboardButton(text=vehicles_btn_text), KeyboardButton(text=completed_requests_btn)],
+            [KeyboardButton(text="Веб-панел 🖥️"), KeyboardButton(text=movement_btn)],
+            [KeyboardButton(text=inventory_btn), KeyboardButton(text="Excel ҳисобот юклаб олиш 📊")],
+            [KeyboardButton(text="Кунлик ҳисобот 📅"), KeyboardButton(text=soz_btn_text)],
+            [KeyboardButton(text=nosoz_btn_text)]
         ]
     elif role == 'manager':
         keyboard = [
@@ -459,6 +460,28 @@ async def download_daily_excel_report(message: Message):
         )
     except Exception as e:
         await message.answer(f"Ҳисобот яратишда хатолик юз берди: {e}")
+
+
+# Avtomashinalar Excel hisoboti yuklab olish
+@router.message(Command("vehicles_excel", "mashinalar_excel"))
+@router.message(F.text.in_(["Mashinalar Excel 🚗", "Машиналар Excel 🚗", "Mashinalar Excel hisoboti 🚗", "Машиналар Excel ҳисоботи 🚗"]))
+async def download_vehicles_excel_report(message: Message):
+    user = await db.get_user(message.from_user.id)
+    if not user:
+        await message.answer("Сиз рўйхатдан ўтмагансиз.")
+        return
+        
+    await message.answer("🚗 Машиналар Excel ҳисоботи тайёрланмоқда, илтимос кутинг... ⏳")
+    try:
+        from aiogram.types import FSInputFile
+        file_path = await db.export_vehicles_to_excel()
+        await message.answer_document(
+            document=FSInputFile(file_path),
+            caption="🚗 **MO BUTLASH** — Автомашиналар ва уларнинг ҳолати бўйича пўрра Excel ҳисоботи"
+        )
+    except Exception as e:
+        await message.answer(f"Ҳисобот яратишда хатолик юз берди: {e}")
+
 
 def build_inventory_table(stock: list[dict]) -> list[str]:
     """Return Telegram-safe, fixed-width inventory table chunks."""

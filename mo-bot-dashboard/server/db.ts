@@ -13,6 +13,10 @@ export const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
+pool.on('error', (err) => {
+  console.warn('Postgres pool idle client warning/error:', err.message);
+});
+
 export async function setupDatabase() {
   // Keeping this for backwards compatibility with server.ts
   console.log("Connected to Neon Postgres database");

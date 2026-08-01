@@ -71,6 +71,31 @@ async def init_db():
                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                )"""
         )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS inventory (
+                   id SERIAL PRIMARY KEY,
+                   name TEXT UNIQUE NOT NULL,
+                   quantity INTEGER NOT NULL DEFAULT 0,
+                   category TEXT DEFAULT 'butlovchi',
+                   unit TEXT DEFAULT 'dona',
+                   price INTEGER DEFAULT 0,
+                   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
+        await db.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'butlovchi'")
+        await db.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS unit TEXT DEFAULT 'dona'")
+        await db.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS price INTEGER DEFAULT 0")
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS stock_transactions (
+                   id SERIAL PRIMARY KEY,
+                   request_id INTEGER,
+                   item_name TEXT NOT NULL,
+                   quantity INTEGER NOT NULL,
+                   type TEXT NOT NULL,
+                   user_id BIGINT,
+                   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_name TEXT")
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_phone TEXT")
         await db.execute("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_model TEXT")
@@ -92,6 +117,18 @@ async def close_db():
     if db_pool is not None:
         await db_pool.close()
         db_pool = None
+
+
+async def keep_alive_ping():
+    """Keep PostgreSQL connection pool warm and prevent Neon serverless auto-suspend."""
+    global db_pool
+    if db_pool is not None:
+        try:
+            async with db_pool.connection() as conn:
+                await conn.execute("SELECT 1")
+        except Exception as e:
+            import logging
+            logging.warning(f"Database keep-alive ping failed: {e}")
 
 
 async def get_vehicle_counts() -> dict:
@@ -1728,3 +1765,235 @@ async def update_request_price(request_id: int, price: int):
         now = datetime.datetime.now().isoformat()
         await db.execute('\n            UPDATE requests \n            SET price = %s, updated_at = %s\n            WHERE id = %s\n        ', (price, now, request_id))
         await db.commit()
+
+
+async def export_vehicles_to_excel() -> str:
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Avtomashinalar"
+    ws.views.sheetView[0].showGridLines = True
+
+    title_font = Font(name="Calibri", size=16, bold=True, color="1F497D")
+    subtitle_font = Font(name="Calibri", size=10, italic=True, color="595959")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+
+    soz_fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+    soz_font = Font(name="Calibri", size=11, bold=True, color="375623")
+
+    nosoz_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+    nosoz_font = Font(name="Calibri", size=11, bold=True, color="C65911")
+
+    thin_border = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+
+    center_align = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    async with db_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("""
+                SELECT 
+                    v.name, 
+                    v.vehicle_model, 
+                    v.driver_name, 
+                    v.driver_phone, 
+                    v.status, 
+                    v.reason,
+                    COUNT(CASE WHEN r.status NOT IN ('completed', 'rejected') THEN 1 END) as active_reqs,
+                    COUNT(CASE WHEN r.status = 'completed' THEN 1 END) as completed_reqs,
+                    COUNT(r.id) as total_reqs
+                FROM vehicles v
+                LEFT JOIN requests r ON v.name = r.vehicle_name
+                GROUP BY v.name, v.vehicle_model, v.driver_name, v.driver_phone, v.status, v.reason
+                ORDER BY 
+                    CASE WHEN v.status = 'nosoz' THEN 1 ELSE 2 END,
+                    v.name;
+            """)
+            vehicles = await cur.fetchall()
+
+    ws.merge_cells("A1:J1")
+    ws["A1"] = "MO BUTLASH - AVTOMASHINALAR RO'YXATI VA HOLATI"
+    ws["A1"].font = title_font
+    ws["A1"].alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 30
+
+    uz_tz = datetime.timezone(datetime.timedelta(hours=5))
+    now_str = datetime.datetime.now(uz_tz).strftime("%Y-%m-%d %H:%M")
+    ws.merge_cells("A2:J2")
+    ws["A2"] = f"Hujjat yaratilgan sana: {now_str} | Jami avtomashinalar: {len(vehicles)} ta"
+    ws["A2"].font = subtitle_font
+    ws["A2"].alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[2].height = 18
+
+    headers = [
+        "№", "Mashina Nomi / Raqami", "Modeli", "Haydovchi Ismi", 
+        "Haydovchi Telefoni", "Holati", "Sabab / Faol Zayavkalar", 
+        "Faol Zayavkalar", "Bajarilgan Zayavkalar", "Jami Zayavkalar"
+    ]
+
+    header_row = 4
+    ws.row_dimensions[header_row].height = 26
+
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=header_row, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    start_data_row = 5
+    for idx, v in enumerate(vehicles, 1):
+        current_row = start_data_row + idx - 1
+        ws.row_dimensions[current_row].height = 24
+
+        status_val = (v['status'] or 'soz').lower()
+        status_display = "NOSOZ" if status_val == 'nosoz' else "SOZ"
+
+        row_data = [
+            idx,
+            v['name'],
+            v.get('vehicle_model') or '—',
+            v.get('driver_name') or '—',
+            v.get('driver_phone') or '—',
+            status_display,
+            v.get('reason') or '—',
+            v.get('active_reqs', 0),
+            v.get('completed_reqs', 0),
+            v.get('total_reqs', 0)
+        ]
+
+        for col_idx, val in enumerate(row_data, 1):
+            cell = ws.cell(row=current_row, column=col_idx, value=val)
+            cell.border = thin_border
+
+            if col_idx in [1, 5, 6, 8, 9, 10]:
+                cell.alignment = center_align
+            else:
+                cell.alignment = left_align
+
+            if col_idx == 6:
+                if status_display == "NOSOZ":
+                    cell.fill = nosoz_fill
+                    cell.font = nosoz_font
+                else:
+                    cell.fill = soz_fill
+                    cell.font = soz_font
+
+    ws.column_dimensions['A'].width = 6
+    ws.column_dimensions['B'].width = 24
+    ws.column_dimensions['C'].width = 18
+    ws.column_dimensions['D'].width = 25
+    ws.column_dimensions['E'].width = 20
+    ws.column_dimensions['F'].width = 14
+    ws.column_dimensions['G'].width = 50
+    ws.column_dimensions['H'].width = 16
+    ws.column_dimensions['I'].width = 20
+    ws.column_dimensions['J'].width = 16
+
+    timestamp = datetime.datetime.now(uz_tz).strftime('%Y-%m-%d_%H-%M')
+    file_path = f"MO_Mashinalar_Hisoboti_{timestamp}.xlsx"
+    wb.save(file_path)
+    return file_path
+
+
+async def auto_process_admin_zayavka(
+    admin_id: int,
+    vehicle_name: str,
+    request_type: str,
+    description: str,
+    parsed_items: list
+) -> tuple[int, list]:
+    """
+    Super Admin uchun avtomatik zayavka yaratish va barcha jarayonlarni 1 bosqichda bajarish:
+    1. Avtomobil holatini avtomatik 'nosoz' ga o'tkazish
+    2. Requests va Request_Items ma'lumotlar bazasida yaratiladi (status: completed)
+    3. Omborga (inventory) avtomatik Prixod qilinadi (tovar miqdori qo'shiladi)
+    4. stock_transactions jadvaliga 'prixod' sifatida yoziladi
+    5. Avtomobil holati qayta 'soz' holatiga o'tkaziladi
+    6. Barcha Excel va bazalarda to'liq saqlanadi.
+    """
+    async with db_pool.connection() as db:
+        async with db.cursor() as cursor:
+            now = datetime.datetime.now().isoformat()
+            
+            # 1. Avtomobilni nosoz holatga o'tkazish
+            await cursor.execute(
+                "UPDATE vehicles SET status = 'nosoz', reason = %s WHERE name = %s",
+                (f"Avto zayavka ({description})", vehicle_name)
+            )
+            
+            total_price = 0
+            for item in parsed_items:
+                total_price += item.get('qty', 1) * item.get('price', 0)
+                
+            # 2. Zayavkani yopilgan (completed) holatda yaratish
+            await cursor.execute(
+                """INSERT INTO requests (
+                    created_by, description, status, approved_by, 
+                    vehicle_name, request_type, price, warehouse_released_by, 
+                    created_at, updated_at
+                ) VALUES (%s, %s, 'completed', %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id""",
+                (admin_id, description, admin_id, vehicle_name, request_type, total_price, admin_id, now, now)
+            )
+            req_row = await cursor.fetchone()
+            request_id = req_row['id']
+            
+            # 3. Request Items, Inventory (Prixod) va Stock Transactions
+            processed_items = []
+            for item in parsed_items:
+                name = item['name'].strip()
+                qty = item.get('qty', 1)
+                unit = item.get('unit', 'dona')
+                price = item.get('price', 0)
+                item_total = qty * price
+                
+                # request_items ga yozish
+                await cursor.execute(
+                    """INSERT INTO request_items (request_id, item_name, quantity_requested, quantity_available, quantity_missing)
+                       VALUES (%s, %s, %s, %s, 0)""",
+                    (request_id, name, qty, qty)
+                )
+                
+                # Omborga (inventory) prixod qilish
+                await cursor.execute("SELECT * FROM inventory WHERE LOWER(TRIM(name)) = LOWER(TRIM(%s))", (name,))
+                existing_inv = await cursor.fetchone()
+                if existing_inv:
+                    await cursor.execute(
+                        "UPDATE inventory SET quantity = quantity + %s, price = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                        (qty, price if price > 0 else existing_inv['price'], existing_inv['id'])
+                    )
+                else:
+                    await cursor.execute(
+                        "INSERT INTO inventory (name, quantity, category, unit, price) VALUES (%s, %s, 'butlovchi', %s, %s)",
+                        (name, qty, unit, price)
+                    )
+                    
+                # stock_transactions (Prixod) yozish
+                await cursor.execute(
+                    """INSERT INTO stock_transactions (request_id, item_name, quantity, type, user_id, created_at)
+                       VALUES (%s, %s, %s, 'prixod', %s, CURRENT_TIMESTAMP)""",
+                    (request_id, name, qty, admin_id)
+                )
+                
+                processed_items.append({'name': name, 'quantity': qty, 'unit': unit})
+                
+            # 4. Avtomobilni qayta 'soz' holatga o'tkazish
+            await cursor.execute(
+                "UPDATE vehicles SET status = 'soz', reason = NULL WHERE name = %s",
+                (vehicle_name,)
+            )
+            
+            await db.commit()
+            return request_id, processed_items
+
+
